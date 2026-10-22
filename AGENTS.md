@@ -126,7 +126,7 @@ The admin decides when to switch. Month 3 to 4 is a target, not a rule. Gates ar
 | Stage | Status | Review state |
 |---|---|---|
 | 000 TOC | Done | |
-| 001 Phase 0 seeding and data assets | partiallydone | Rev 2.2 applied per owner. Rev 2.1 verified by running the ingestion script on the real file (49,881 rows). |
+| 001 Phase 0 seeding and data assets | partiallydone | Rev 2.3 applied per audit (composite PK, canonical categories, 50,545 post-dedupe baseline on real bangladesh.poi). |
 | 002 Provenance firewall and legal | NotDone | Rev 2.1 verified. Rev 2.2 patch (fuzz-test scoping, egress logging, hash coverage, phone regex, `GETDEL`, receipts, quarantine, legal gate) applied per owner, not re-read. |
 | 003 Storage schema and evidence ledger | NotDone | Rev 2.6 applied per Stage 004/005, 008/009/011, 006/007/010, and 012–016 audit adoptions (additive: segment_speeds_tod, h3_edge_speeds_tod, eta_tod_corrections in §4.9; vendor_provider in ride_vendor_data in §4.8; takedown_reports, provisional_challengers, query_clusters.published_poi_id, dual search feed views, orders.user_id in §4.10; post_trip_labels, chk_poi_bilingual_active in §4.11; ledger_invalidations reason widening, osm_road_names, user_private_places sovereign identity in §4.12; Rev 2.2 core verified). |
 | 004 OSRM routing engine and dynamic traffic | NotDone | Rev 2.1 applied per audit (TOD-learned speed pipeline with segment_speeds_tod, multiplicative correction k(v,b), per-edge map-matching, 300ms timeout, relative ETA cutover gates ≤ 12% median / ≤ 25% p95, car/bike/cng profiles). |
@@ -155,7 +155,7 @@ The admin decides when to switch. Month 3 to 4 is a target, not a rule. Gates ar
 - `bangladesh.poi`: 77.5% of rows named; `name:bn` 6.2%; `name:en` 11.2%; about 16% have Bangla script in `name`.
 - Noise: about 12,780 rows are chimneys, works, toilets, wells, playgrounds; 4,543 are villages; about 1,874 near-duplicate pairs (same name within 25 m).
 - No traffic-signal nodes: intersections (for example "Bata Signal") are absent. The 300-point intersection and gate quota depends entirely on field survey.
-- Stage 001 tag-based mapping stores 49,881 places (mosque 10,702, school 7,600, restaurant 5,388, bank 3,893, pharmacy 3,772, hospital 3,051, station 2,945, government 2,281, worship 1,805, fuel 1,737, university 1,495, hotel 1,420, area 749, supermarket 727, park 709, mall 610, atm 497, market 473, airport 27).
+- Stage 001 tag-based mapping stores 50,545 places (mosque 10,867, school 7,752, restaurant 5,458, bank 3,912, pharmacy 3,788, hospital 3,090, transit_station 2,956, government 2,312, worship 1,830, fuel 1,740, hotel 1,516, university 1,503, area 757, supermarket 728, park 720, shopping_mall 611, atm 500, market 473, airport 32).
 - The ADM0 file is a crude coastline (1,513 vertices). Clipping to it deletes about 676 real coastal and island places, so do not clip to it.
 
 ---

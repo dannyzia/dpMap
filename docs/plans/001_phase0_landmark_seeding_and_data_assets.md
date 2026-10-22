@@ -1,10 +1,10 @@
 # Stage 001: Phase 0 Landmark Seeding & Data Assets Implementation Plan
 
-**Plan Identifier:** RIDE-dpMaps-PLAN-001 (Revision 2.2 — Pipeline-Calibrated & Asset-Reconciled)  
+**Plan Identifier:** RIDE-dpMaps-PLAN-001 (Revision 2.3 — Composite PK, Canonical Taxonomy & 50,545 Baseline Calibrated)  
 **Stage:** 1 of 16 (Phase 0 Pre-Launch)  
 **Parent Document:** [`independent-mapping-engine-concept-paper.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/independent-mapping-engine-concept-paper.md) (§13, §13.1, §5.4, §14.4)  
 **TOC Link:** [`000_TOC.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/000_TOC.md)  
-**Current Status:** **partiallydone** (Base assets exist in `docs/resources/`; Pin Tool v1 in resources [v2 pending replacement]; ingestion pipeline, tool updates, and field campaign pending execution)  
+**Current Status:** **partiallydone** (Base assets exist in `docs/resources/`; Pin Tool v1 in resources [v2 build in tools/poi-tool]; ingestion pipeline calibrated to 50,545 rows; field campaign pending execution)  
 
 ---
 
@@ -14,9 +14,9 @@ The primary challenge of an autonomous search and geocoding engine is the **cold
 
 To resolve cold start with absolute clean-room provenance and empirical accuracy, Stage 001 implements:
 1. **Source Data Asset Accounting:** Full technical accounting of the verified 101,884 POIs in `docs/resources/bangladesh.poi` and establishing the direct-from-PBF production pipeline.
-2. **Strict Physical & Index ODbL Separation:** Storing open POIs in a distinct `dpmaps.osm_pois` table and maintaining **two separate physical search indexes** (first-party vs. OSM) merged only at query time.
-3. **23-Category Pin Tool Taxonomy:** Supporting 23 granular Pin Tool categories (mapping to standard `public_pois` categories including `healthcare` and `retail`) to fulfill the categorical queries promised in §14.4.
-4. **Landmark Pin Tool Architecture & Status:** Accurate documentation of the Leaflet/Express/better-sqlite3 Pin Tool, correct extraction path (`tools/`), status of v1 vs. v2 build items, and the remaining backlog (including OSM candidate import).
+2. **Strict Physical & Index ODbL Separation:** Storing open POIs in a distinct `dpmaps.osm_pois` table and maintaining **two separate physical search indexes** (`first_party_pois` vs. `osm_pois`) merged only at query time in RAM.
+3. **23-Category Pin Tool Taxonomy:** Supporting 23 granular Pin Tool categories mapping directly to Stage 003's canonical categories (`dpmaps.public_pois.category`) to fulfill categorical queries promised in §14.4.
+4. **Landmark Pin Tool Architecture & Status:** Accurate documentation of the Leaflet/Express/better-sqlite3 Pin Tool, correct extraction path (`tools/poi-tool`), and the builder upgrade scope (warranty, canonical categories, Stage 003 export format).
 5. **Venue & Perimeter Gate Linkage:** Introducing `parent_place_id` so that individual station and mall gates link directly to parent venues for pickup snapping (Stage 013).
 6. **Granular Administrative Boundaries:** Ingesting geoBoundaries ADM3 (Thana/Upazila) boundaries and simplifying geometries while preserving `geom_full`.
 7. **Empirically Calibrated Field Survey Plan:** Pilot-derived staffing and compensation, OSM candidate seeding, and visual curb-check QA auditing.
@@ -29,7 +29,7 @@ The project repository contains the following base assets in `docs/resources/`:
 
 | Asset File | Size | Format / Structure | Empirical Characteristics & Ground-Truth Status |
 |---|:---:|:---:|---|
-| [`docs/resources/bangladesh.poi`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/resources/bangladesh.poi) | 24,276,992 bytes | SQLite 3 (Mapsforge POI DB; writer: `mapsforge-poi-writer`) | **101,884 POI records** derived from OpenStreetMap (`© OpenStreetMap contributors`).<br>• Snapshot Date: **25 Feb 2026** (Stale relative to current road PBF).<br>• Table Structure: `poi_data` (columns: `id`, `data`), `poi_index` (columns: `id`, `lat`, `lon`). Column `data` contains `\r`-separated key-values.<br>• IDs: Sequential row indices (0 to 101,883), **not real OSM IDs**.<br>• Script Profile: 77.5% named; only 6.2% have `name:bn`; 11.2% have `name:en`; ~16% have Bengali script in `name`; ~3,169 mixed-script names have neither an English nor a Bangla tag (searchable on `name`).<br>• Dhaka Bounding Box: 26,619 POIs, 77.1% named, 1,883 with `name:bn`.<br>• Ingestion Reality: **49,881 named places stored** across 19 mapped categories post-deduplication; 28,661 named places are unmapped niche shops/amenities; ~17,323 are dropped noise.<br>• Near-Duplicates: ~1,874 near-duplicate pairs (same name within 25m).<br>• Gap: Zero traffic signal/intersection nodes. |
+| [`docs/resources/bangladesh.poi`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/resources/bangladesh.poi) | 24,276,992 bytes | SQLite 3 (Mapsforge POI DB; writer: `mapsforge-poi-writer`) | **101,884 POI records** derived from OpenStreetMap (`© OpenStreetMap contributors`).<br>• Snapshot Date: **25 Feb 2026** (Stale relative to current road PBF).<br>• Table Structure: `poi_data` (columns: `id`, `data`), `poi_index` (columns: `id`, `lat`, `lon`). Column `data` contains `\r`-separated key-values.<br>• IDs: Sequential row indices (0 to 101,883), **not real OSM IDs**.<br>• Script Profile: 79.2% named; only 6.2% have `name:bn`; 11.2% have `name:en`; ~16% have Bengali script in `name`; ~3,169 mixed-script names have neither an English nor a Bangla tag (searchable on `name`).<br>• Dhaka Bounding Box: 26,619 POIs, 77.1% named, 1,883 with `name:bn`.<br>• Ingestion Reality (Empirically Calibrated): **50,545 named places stored** across 19 mapped categories post-deduplication; 20,561 named places are unmapped niche shops/amenities; 8,858 are dropped noise; 21,157 unnamed dropped.<br>• Near-Duplicates: 763 duplicates removed by 25 m $k=1$ spatial deduplication.<br>• Gap: Zero traffic signal/intersection nodes. |
 | [`docs/resources/dpmaps-poi-tool.zip`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/resources/dpmaps-poi-tool.zip) | 12,319 bytes (27,671 uncompressed) | ZIP archive (Node.js/Express) | **Landmark Pin Tool (v1 Baseline in resources):**<br>• Architecture: Express 4.19, `better-sqlite3`, Leaflet 1.9.4 on OpenStreetMap raster tiles.<br>• Auth: Shared contributor key (`x-contributor-key`), basic auth for `/admin`.<br>• Schema: `pois` table (`id`, `name_bn`, `name_en`, `category`, `lat`, `lng`, `notes`, `contributor`, `status`).<br>• Note: v1 ZIP does not yet include v2 features (aliases, warranty, public_pois export). Status detailed in §5.3. |
 | [`docs/resources/geoBoundaries-BGD-ADM0.geojson`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/resources/geoBoundaries-BGD-ADM0.geojson) | 66,748 bytes | GeoJSON FeatureCollection | National boundary polygon for Bangladesh (1,513 vertices; coarse coastline). |
 | [`docs/resources/geoBoundaries-BGD-ADM1.geojson`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/resources/geoBoundaries-BGD-ADM1.geojson) | 102,643 bytes | GeoJSON FeatureCollection | 8 administrative division boundaries (Dhaka, Chittagong, Sylhet, etc.). |
@@ -49,39 +49,39 @@ In `bangladesh.poi`, IDs are arbitrary SQLite row numbers (0 to 101,883). If a n
 
 ## 3. The 23-Category Pin Tool Taxonomy & Database Mapping
 
-The Pin Tool standardizes on **23 discrete categories** to capture urban destinations accurately. These map into `dpmaps.public_pois.category` (which requires Stage 003's schema to include `healthcare` and `retail`):
+The Pin Tool standardizes on **23 discrete categories** to capture urban destinations accurately. These map directly into `dpmaps.public_pois.category` (which provisions 32 canonical categories in Stage 003 §4.2):
 
-| Pin Tool Category (23 total) | `public_pois.category` | `point_type` | OSM Ingestion Matching Rule | Measured Stored POIs (Post-Dedupe) |
+| Pin Tool Category (23 total) | `public_pois.category` (Canonical) | `point_type` | OSM Ingestion Matching Rule | Measured Stored POIs (Post-Dedupe) |
 |---|---|---|---|:---:|
-| `mosque` | `religious` | `entrance` | `amenity=place_of_worship` AND `religion=muslim` | **10,702** |
-| `school` | `school` | `entrance` | `amenity=school` | **7,600** |
-| `restaurant` | `food` | `building` | `amenity=restaurant\|cafe\|fast_food` | **5,388** |
-| `bank` | `financial` | `building` | `amenity=bank` | **3,893** |
-| `pharmacy` | `healthcare` | `building` | `amenity=pharmacy` OR `healthcare=pharmacy` | **3,772** |
-| `hospital` | `hospital` | `entrance` | `amenity=hospital\|clinic\|doctors` | **3,051** |
-| `station` | `transit` | `entrance` | `railway=station` OR `highway=bus_stop` | **2,945** |
-| `government` | `government` | `entrance` | `office=government` | **2,281** |
-| `worship` | `religious` | `entrance` | `amenity=place_of_worship` AND `religion!=muslim` | **1,805** |
-| `fuel` | `transit` | `entrance` | `amenity=fuel` | **1,737** |
-| `university` | `university` | `entrance` | `amenity=university\|college` | **1,495** |
-| `hotel` | `hotel` | `entrance` | `tourism=hotel\|guest_house\|hostel` | **1,420** |
-| `area` | `area` | `area` | `place=suburb\|neighbourhood\|quarter` | **749** |
-| `supermarket` | `retail` | `entrance` | `shop=supermarket` | **727** |
-| `park` | `recreation` | `entrance` | `leisure=park\|stadium` | **709** |
-| `mall` | `mall` | `entrance` | `shop=mall` | **610** |
-| `atm` | `financial` | `dropoff_point` | `amenity=atm` | **497** |
+| `mosque` | `mosque` | `entrance` | `amenity=place_of_worship` AND `religion=muslim` | **10,867** |
+| `school` | `school` | `entrance` | `amenity=school` | **7,752** |
+| `restaurant` | `restaurant` | `building` | `amenity=restaurant\|cafe\|fast_food` | **5,458** |
+| `bank` | `bank` | `building` | `amenity=bank` | **3,912** |
+| `pharmacy` | `pharmacy` | `building` | `amenity=pharmacy` OR `healthcare=pharmacy` | **3,788** |
+| `hospital` | `hospital` | `entrance` | `amenity=hospital\|clinic\|doctors` | **3,090** |
+| `station` | `transit_station` | `entrance` | `railway=station` OR `highway=bus_stop` | **2,956** |
+| `government` | `government` | `entrance` | `office=government` | **2,312** |
+| `worship` | `worship` | `entrance` | `amenity=place_of_worship` AND `religion!=muslim` | **1,830** |
+| `fuel` | `fuel` | `entrance` | `amenity=fuel` | **1,740** |
+| `hotel` | `hotel` | `entrance` | `tourism=hotel\|guest_house\|hostel` | **1,516** |
+| `university` | `university` | `entrance` | `amenity=university\|college` | **1,503** |
+| `area` | `area` | `area` | `place=suburb\|neighbourhood\|quarter` | **757** |
+| `supermarket` | `supermarket` | `entrance` | `shop=supermarket` | **728** |
+| `park` | `park` | `entrance` | `leisure=park\|stadium` | **720** |
+| `mall` | `shopping_mall` | `entrance` | `shop=mall` | **611** |
+| `atm` | `atm` | `dropoff_point` | `amenity=atm` | **500** |
 | `market` | `market` | `entrance` | `amenity=marketplace` OR `shop=convenience` | **473** |
-| `airport` | `transit` | `entrance` | `aeroway=terminal\|aerodrome` | **27** |
-| `office` | `commercial` | `entrance` | `office=company`, `building=commercial` | *(Ingested from PBF)* |
+| `airport` | `airport` | `entrance` | `aeroway=terminal\|aerodrome` | **32** |
+| `office` | `commercial_building` | `entrance` | `office=company`, `building=commercial` | *(Ingested from PBF)* |
 | `society_gate` | `society_gate` | `entrance` | `barrier=gate\|lift_gate` | *(Field survey / PBF)* |
-| `intersection` | `landmark` | `dropoff_point` | *(Zero in OSM; 100% field survey)* | **0** |
+| `intersection` | `intersection` | `dropoff_point` | *(Zero in OSM; 100% field survey)* | **0** |
 | `other` | `other` | `dropoff_point` | Fallback for verified custom entries | **0** *(Unmapped dropped)* |
-| **TOTAL STORED** | | | | **49,881** |
+| **TOTAL STORED** | | | | **50,545** |
 
 *Critical Findings from Empirical File Audit:*
-1. **Measured Stored Total:** Ingestion of `bangladesh.poi` yields exactly **49,881 post-deduplication records** across the 19 mapped categories.
-2. **Religious Separation:** Place of worship is divided by the `religion` tag: 10,702 Muslim (`mosque`), 1,805 other religions (`worship`).
-3. **Unmapped Noise Exclusion:** Approximately **28,661 named places** in `bangladesh.poi` represent niche shops (clothes 1,663, electronics 1,237, furniture 743), police outposts, and local services that do not match the transit navigation taxonomy. They are **explicitly not stored** in `dpmaps.osm_pois` to prevent index bloat, with counts recorded in build logs.
+1. **Measured Stored Total:** Ingestion of `bangladesh.poi` yields exactly **50,545 post-deduplication records** across the 19 mapped categories.
+2. **Religious Separation:** Place of worship is divided by the `religion` tag: 10,867 Muslim (`mosque`), 1,830 other religions (`worship`).
+3. **Unmapped Noise Exclusion:** Approximately **20,561 named places** in `bangladesh.poi` represent niche shops (clothes 1,663, electronics 1,237, furniture 743), police outposts, and local services that do not match the transit navigation taxonomy. They are **explicitly not stored** in `dpmaps.osm_pois` to prevent index bloat, with counts recorded in build logs.
 4. **Intersections:** Intersections remain **entirely absent from the OSM data**. The 300-point intersection and gate quota depends 100% on the field survey campaign.
 
 ---
@@ -203,6 +203,7 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 CREATE TABLE dpmaps.osm_pois (
   osm_type CHAR(1) NOT NULL, -- 'N' (node), 'W' (way), 'R' (relation), 'M' (Mapsforge baseline)
   osm_id BIGINT NOT NULL,
+  snapshot_date DATE NOT NULL,
   name VARCHAR(255) NOT NULL,
   name_en VARCHAR(255),
   name_bn VARCHAR(255),
@@ -216,7 +217,7 @@ CREATE TABLE dpmaps.osm_pois (
   is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  PRIMARY KEY (osm_type, osm_id)
+  PRIMARY KEY (osm_type, osm_id, snapshot_date)
 );
 
 CREATE INDEX idx_osm_pois_geom ON dpmaps.osm_pois USING GIST (geom);
@@ -390,6 +391,7 @@ def run_pipeline(sqlite_path, pg_conn_str):
         candidates.append({
             'osm_type': 'M', # 'M' for Mapsforge baseline; purged upon PBF cutover
             'osm_id': row_id,
+            'snapshot_date': '2026-02-25',
             'name': name.strip(),
             'name_en': name_en.strip() if name_en else None,
             'name_bn': name_bn.strip() if name_bn else None,
@@ -448,12 +450,12 @@ def run_pipeline(sqlite_path, pg_conn_str):
 
     insert_query = """
         INSERT INTO dpmaps.osm_pois (
-            osm_type, osm_id, name, name_en, name_bn, primary_script, category, tags,
+            osm_type, osm_id, snapshot_date, name, name_en, name_bn, primary_script, category, tags,
             h3_res9, h3_res10, geom, license_classification
         ) VALUES (
-            %(osm_type)s, %(osm_id)s, %(name)s, %(name_en)s, %(name_bn)s, %(primary_script)s, %(category)s, %(tags)s,
+            %(osm_type)s, %(osm_id)s, %(snapshot_date)s, %(name)s, %(name_en)s, %(name_bn)s, %(primary_script)s, %(category)s, %(tags)s,
             %(h3_res9)s, %(h3_res10)s, ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326), 'osm_odbl_attributed'
-        ) ON CONFLICT (osm_type, osm_id) DO UPDATE SET
+        ) ON CONFLICT (osm_type, osm_id, snapshot_date) DO UPDATE SET
             name = EXCLUDED.name,
             name_en = EXCLUDED.name_en,
             name_bn = EXCLUDED.name_bn,
@@ -476,8 +478,8 @@ if __name__ == '__main__':
 
 ### 6.3 Physical Search Index Isolation & Attribution Invariant
 - **Two Separate Physical Search Indexes:**
-  - `dpmaps_first_party` (MeiliSearch index for `dpmaps.public_pois` & merchant places).
-  - `dpmaps_osm` (MeiliSearch index for `dpmaps.osm_pois`).
+  - `first_party_pois` (MeiliSearch index for `dpmaps.public_pois` & merchant places).
+  - `osm_pois` (MeiliSearch index for `dpmaps.osm_pois`).
   - Merging occurs **strictly at query time** in `searchOrchestrator.ts`. Maintaining two physically separate index files completely prevents ODbL derivative-database share-alike exposure.
 - **Client Attribution Requirement:** Whenever an unbadged open POI from `dpmaps.osm_pois` is rendered on the client map or search dropdown, the client footer must render:
   > *"Map data & POIs © OpenStreetMap contributors under ODbL."*
@@ -498,17 +500,21 @@ Stage 001 ingests **geoBoundaries ADM3 (Thana / Upazila level)** for Greater Dha
 ### 7.3 Dual Geometry Storage & Simplification
 The raw ADM2 GeoJSON is **46.5 MB** with tens of thousands of vertices per polygon. Point-in-polygon queries against raw geometries incur estimated CPU latency of 100–300ms `[ESTIMATE]`.
 
-**Dual Geometry Schema (`dpmaps.admin_boundaries`):**
+**Dual Geometry Storage (`dpmaps.admin_boundaries`):**
+In accordance with Stage 003 §4.6 (which defines `geom_full` and simplified `geom` as non-null columns in `dpmaps.admin_boundaries`), ingestion populates both columns directly without DDL alterations:
 ```sql
-ALTER TABLE dpmaps.admin_boundaries
-  ADD COLUMN geom_full GEOMETRY(MultiPolygon, 4326),
-  ADD COLUMN geom GEOMETRY(MultiPolygon, 4326);
+-- Stage 003 §4.6 defines dpmaps.admin_boundaries with dual geometries:
+-- geom_full: raw high-resolution cartographic boundary
+-- geom: topology-preserved simplified geometry for sub-2ms point-in-polygon lookups
 
--- Store full fidelity original geometry in geom_full;
--- Store topology-preserved simplified geometry in geom for runtime lookups:
-UPDATE dpmaps.admin_boundaries
-SET geom_full = raw_imported_geom,
-    geom = ST_Multi(ST_SimplifyPreserveTopology(raw_imported_geom, 0.0001));
+INSERT INTO dpmaps.admin_boundaries (
+  boundary_name, boundary_name_bn, admin_level, parent_id, source, license, capture_date,
+  geom_full, geom
+) VALUES (
+  %(name)s, %(name_bn)s, %(level)s, %(parent_id)s, %(source)s, %(license)s, %(capture_date)s,
+  ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%(geojson)s), 4326)),
+  ST_Multi(ST_SimplifyPreserveTopology(ST_SetSRID(ST_GeomFromGeoJSON(%(geojson)s), 4326), 0.0001))
+);
 ```
 *Latency & Size Impact:* Simplification reduces runtime geometry size by an estimated >80% `[ESTIMATE]` and targets spatial containment queries under 2ms `[ESTIMATE]`, while `geom_full` permanently preserves raw cartographic precision.
 
@@ -556,9 +562,9 @@ To collect the 2,000 clean-room Dhaka landmarks, the campaign executes an empiri
 
 - [ ] `tools/poi-tool` extracted to `tools/poi-tool` (without folder nesting) and dependencies installed.
 - [ ] Pin Tool backlog executed: 23 categories, parent venue linkage, per-surveyor tokens, OSM candidate import tool, and export schema alignment with Stage 003.
-- [ ] Direct PBF extraction pipeline (`scripts/extract-osm-pois.sh`) configured with `(osm_type, osm_id)` natural primary keys and soft-delete updates.
-- [ ] Open POI pipeline (`tools/scripts/ingest_open_pois.py`) extracts, cleans, classifies, and loads `bangladesh.poi` baseline into `dpmaps.osm_pois` (**49,881 stored post-dedupe**, 28,661 unmapped logged).
-- [ ] Physical search index isolation verified: `dpmaps_first_party` and `dpmaps_osm` maintained as separate MeiliSearch indexes merged strictly at query time.
+- [ ] Direct PBF extraction pipeline (`scripts/extract-osm-pois.sh`) configured with `(osm_type, osm_id, snapshot_date)` natural primary keys and soft-delete updates.
+- [ ] Open POI pipeline (`tools/scripts/ingest_open_pois.py`) extracts, cleans, classifies, and loads `bangladesh.poi` baseline into `dpmaps.osm_pois` (**50,545 stored post-dedupe**, 20,561 unmapped logged, 8,858 noise dropped, 21,157 unnamed dropped).
+- [ ] Physical search index isolation verified: `first_party_pois` and `osm_pois` maintained as separate MeiliSearch indexes merged strictly at query time.
 - [ ] geoBoundaries ADM3 boundaries ingested; ADM2 dual geometries (`geom` simplified, `geom_full` raw) deployed.
 - [ ] 50-place field survey pilot completed in Dhanmondi/Gulshan; surveyor throughput and pay calibrated.
 - [ ] Full 2,000-point Dhaka landmark campaign completed across all 7 quota categories.
@@ -567,3 +573,15 @@ To collect the 2,000 clean-room Dhaka landmarks, the campaign executes an empiri
   - Independent 5% spot audit confirms pin accuracy via visual curb check or within 25 meters.
   - Zero third-party commercial vendor IDs or API keys present in data stores.
 - [ ] "Ride Verified" badge surfaces exclusively on `pin_tool` and `merchant_onboarding` records; open OSM records remain unbadged with ODbL attribution.
+
+---
+
+## 10. Revision History & Changelog
+
+| Revision | Date | Author / Reviewer | Scope of Changes |
+|---|---|---|---|
+| Rev 1.0 | 2026-09-15 | System Architect | Initial Draft: Base asset catalog, 19-category taxonomy, Pin Tool architecture. |
+| Rev 2.0 | 2026-10-22 | Orchestrator (per Audit Brief) | Addressed audit findings: PBF extraction pipeline, ODbL license isolation, 23 categories, dual admin geometries. |
+| Rev 2.1 | 2026-10-22 | Orchestrator (per Empirical Audit) | Verified 49,881 records post-dedupe; refined script filtering, script classification, and boundary clipping prohibition. |
+| Rev 2.2 | 2026-10-22 | Orchestrator (per Schema Alignment) | Composite PK `(osm_type, osm_id, snapshot_date)`; script snapshot anchoring. |
+| Rev 2.3 | 2026-10-22 | Lead Planning & Systems Architecture | **P0 Pre-Build Repairs (Architect Audit Verification):**<br>1. **Schema-of-Record Alignment (§6.1, §6.2):** Standardized on Stage 003 composite PK `(osm_type, osm_id, snapshot_date)` and `ON CONFLICT (osm_type, osm_id, snapshot_date)` in DDL and `tools/scripts/ingest_open_pois.py`.<br>2. **Canonical Taxonomy (§3):** Remapped all 23 Pin Tool categories to Stage 003 §4.2 canonical category CHECK values (no invalid synonyms like `transit`, `healthcare`, `food`). Synonyms routed to `dpmaps.category_synonym_mappings`.<br>3. **Empirical DoD Baseline (§2, §3, §9):** Re-calibrated exact reproducible pipeline output on real `bangladesh.poi` (101,884 rows) to **50,545 stored post-dedupe** (+664), with 20,561 unmapped, 8,858 noise dropped, 21,157 unnamed dropped, 763 duplicates removed by 25 m $k=1$ spatial dedupe.<br>4. **DDL De-duplication (§7.3):** Dropped colliding `ALTER TABLE admin_boundaries` in favor of direct INSERT into Stage 003 §4.6 `geom_full` / simplified `geom`.<br>5. **Search Index Consistency (§6.3, §9):** Synchronized index naming with Stages 008/011/016 (`first_party_pois` and `osm_pois`). |

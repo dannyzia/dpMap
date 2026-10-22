@@ -34,7 +34,7 @@ Stage 008 delivers an autonomous search infrastructure:
 |---|---|---|
 | **Host Instance** | 1× Cloud VPS (2 vCPU / 4 GB RAM) `[ESTIMATE]` | 2× Cloud VPS HA (4 vCPU / 8 GB RAM) `[ESTIMATE]` |
 | **Peak Search QPS** | 5 – 15 QPS `[ESTIMATE]` | 50 – 150 QPS `[ESTIMATE]` |
-| **Index Footprint** | ~52,000 POIs total `[ESTIMATE: 2,000+ first-party + 49,881 OSM per Stage 001]` | 500,000+ docs & aliases `[ESTIMATE]` |
+| **Index Footprint** | ~52,500 POIs total `[ESTIMATE: 2,000+ first-party + 50,545 OSM per Stage 001]` | 500,000+ docs & aliases `[ESTIMATE]` |
 | **Storage Allocation**| 40 GB NVMe SSD | 100 GB NVMe SSD |
 | **Query Latency SLA** | p95 < 15 ms `[ESTIMATE — measure]` | p95 < 12 ms `[ESTIMATE — measure]` |
 

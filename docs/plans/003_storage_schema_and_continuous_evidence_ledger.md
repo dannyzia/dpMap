@@ -1,6 +1,6 @@
 # Stage 003: Storage Schema & Continuous Evidence Ledger Implementation Plan
 
-**Plan Identifier:** RIDE-dpMaps-PLAN-003 (Revision 2.3 — Audited PostGIS Storage Architecture, Clean-Room Evidence Ledger & Stage 004/005 TOD Adoption)  
+**Plan Identifier:** RIDE-dpMaps-PLAN-003 (Revision 2.6 — Audited PostGIS Storage Architecture, Clean-Room Evidence Ledger & Cross-Stage Adoptions)  
 **Stage:** 3 of 16 (Database Architecture & Storage Lifecycle)  
 **Parent Document:** [`independent-mapping-engine-concept-paper.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/independent-mapping-engine-concept-paper.md) (§5, §8.1–8.3, §11.1)  
 **TOC Link:** [`000_TOC.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/000_TOC.md)  
@@ -14,7 +14,7 @@ Legacy mapping architectures rely on static quarterly database dumps that grow o
 
 Stage 003 formalizes the complete persistence layer, aligning directly with the clean-room boundaries and physical table isolations mandated in Stage 002:
 1. **Physical Table & Role Isolation:** Implements strict separation between first-party operational ride data (`orders`), vendor-derived transactional data (`ride_vendor_data`), and mapping assets (`dpmaps.*`). Grants the mapping worker role (`dpmaps_worker`) explicit column-level `SELECT` access strictly to first-party operational fields, with zero access (`REVOKE ALL`) to vendor-derived tables and customer receipts.
-2. **ODbL vs. First-Party Geometry Separation:** Isolates OpenStreetMap data into `dpmaps.osm_pois` (holding the 49,881 baseline POIs from `bangladesh.poi` under ODbL attribution) while reserving `dpmaps.public_pois` strictly for first-party, clean-room proprietary landmarks.
+2. **ODbL vs. First-Party Geometry Separation:** Isolates OpenStreetMap data into `dpmaps.osm_pois` (holding the 50,545 baseline POIs from `bangladesh.poi` under ODbL attribution) while reserving `dpmaps.public_pois` strictly for first-party, clean-room proprietary landmarks.
 3. **Cryptographically Mitigated 135-Day Window Key Architecture:** Resolves the multi-key deduplication problem with operational rotation margin. Keys live **135 days** and rotate every 30 days (providing 15 days of rotation jitter slack); each vote is written under every key valid at trip completion. Distinct rider counts over any 90-day window are evaluated under the oldest qualifying key that covers the entire window, preventing overcounting while defining an explicit partial-window mode at launch.
 4. **Zero-Write-Amplification Decay Model:** Implements exponential time-decay ($\lambda = \frac{\ln(2)}{45} \approx 0.0154033/\text{day}$) calculated dynamically at query and aggregation time. This eliminates destructive nightly `UPDATE` jobs across millions of partitioned rows, reserving the decay worker strictly for weekly partition drops and stats materialization scheduled off-peak at **21:00–23:00 UTC** (03:00–05:00 Dhaka time).
 5. **Administrative Hierarchy (ADM0–ADM4):** Deploys national down to Ward/Union administrative boundaries (`dpmaps.admin_boundaries`) with dual full/simplified geometries, enabling first-party receipt generation without commercial vendor text (with explicit warnings against clipping land to crude ADM0 coastlines).
@@ -70,7 +70,7 @@ The database layer runs on **PostgreSQL 16** with **PostGIS 3.4** and **pg_partm
 ├──────────────────────────────────────────┼─────────────────────────────────────────────┤
 │ • `orders` [ASSUMPTION on Ride backend]  │ • `public_pois` & `poi_aliases`             │
 │   (id, status, fare_bdt, dropoff_lat,    │ • `poi_versions`, `releases`, `release_pois`│
-│    dropoff_lng [DRIVER GPS FIX], created)│ • `osm_pois` (ODbL Baseline, 49,881 POIs)   │
+│    dropoff_lng [DRIVER GPS FIX], created)│ • `osm_pois` (ODbL Baseline, 50,545 POIs)   │
 │ • `ride_vendor_data` (Tier V)            │ • `trip_evidence_ledger` (Weekly Partitions)│
 │   (ride_id, vendor_dest_lat,             │ • `ledger_pseudonyms` (Child Table)         │
 │    vendor_dest_lng, vendor_quoted_dist_m)│ • `ledger_invalidations` (Fraud Purge Table)│
@@ -620,7 +620,7 @@ WHERE parent_table = 'dpmaps.routing_eval_events';
 ### 4.8 Baseline POIs, Search Term Clusters & Vendor Data Isolation
 
 #### OpenStreetMap Baseline Gazetteers (`dpmaps.osm_pois`)
-Holds 49,881 baseline places imported from `bangladesh.poi` under ODbL license attribution. Note that Mapsforge IDs are snapshot-specific sequential numbers ('M', id), anchored to the snapshot date:
+Holds 50,545 baseline places imported from `bangladesh.poi` under ODbL license attribution. Note that Mapsforge IDs are snapshot-specific sequential numbers ('M', id), anchored to the snapshot date:
 
 ```sql
 CREATE TABLE dpmaps.osm_pois (
@@ -1166,7 +1166,7 @@ Stage 003 mandates the following automated test verifications prior to Phase 1 d
 - [ ] Database roles created (`dpmaps_worker`, `ride_dispatch`, `dpmaps_admin`, `dpmaps_analyst`) with granular per-table privileges.
 - [ ] Explicit column-level whitelist on `orders` and `REVOKE ALL` on `ride_vendor_data` and `ride_receipts` verified via automated permission tests.
 - [ ] Append-only immutability enforced (`REVOKE UPDATE, DELETE`) on `provenance_events`, `releases`, `poi_versions`, `release_pois`, and `ledger_invalidations`.
-- [ ] DDL deployed: `public_pois` (with 26 canonical categories CHECK constraint, category synonym mappings, nullable names, and random UUIDs), `poi_aliases`, `poi_versions`, `releases`, `release_pois` (with `ON DELETE RESTRICT`), `osm_pois` (with composite PK `(osm_type, osm_id, snapshot_date)`), `trip_evidence_ledger` (with `uq_ledger_trip` idempotency), `ledger_pseudonyms`, `ledger_invalidations`, `active_dedup_key`, `segment_speeds_tod`, `h3_edge_speeds_tod`, `eta_tod_corrections` (Stage 004 consumers), `provenance_events`, `suppressions` (immutable partial index without `NOW()`, SLA duration tracking), `query_clusters`, `admin_boundaries` (with `geom` and `geom_full`, no cascade delete), and evaluation tables.
+- [ ] DDL deployed: `public_pois` (with 32 canonical categories CHECK constraint, category synonym mappings, nullable names, and random UUIDs), `poi_aliases`, `poi_versions`, `releases`, `release_pois` (with `ON DELETE RESTRICT`), `osm_pois` (with composite PK `(osm_type, osm_id, snapshot_date)`), `trip_evidence_ledger` (with `uq_ledger_trip` idempotency), `ledger_pseudonyms`, `ledger_invalidations`, `active_dedup_key`, `segment_speeds_tod`, `h3_edge_speeds_tod`, `eta_tod_corrections` (Stage 004 consumers), `provenance_events`, `suppressions` (immutable partial index without `NOW()`, SLA duration tracking), `query_clusters`, `admin_boundaries` (with `geom` and `geom_full`, no cascade delete), and evaluation tables.
 - [ ] 135-day key schedule and multi-key ingestion implemented; single-key aggregation view `dpmaps.v_active_cluster_evidence` and materialized view `dpmaps.mv_cluster_evidence_stats` verified against simulated ground truth.
 - [ ] Launch cold-start partial-window mode ($t < 90\text{ days}$) verified with strict privacy threshold floor.
 - [ ] Query-time exponential decay function `dpmaps.calculate_decayed_weight` deployed; zero-write-amplification verified.
