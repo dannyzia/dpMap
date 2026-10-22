@@ -28,6 +28,15 @@ at session start.
   (repo, CI on the exact head SHA, and runtime endpoint/dataset verification:
   OSRM `/route/v1/driving`, MeiliSearch `/health`, or verified POI database
   row counts; "healthy" is not "current").
+- **Zero-Trust Audit Rule (Mandatory):** Never believe builder or coding model
+  self-reports, claimed test successes, or unverified logs at face value.
+  Coding models can make mistakes, omit checks, or report false passes
+  (as proven when a claimed passing Pin Tool server had segfaulted and left
+  0 database rows). Every small step and milestone requires independent
+  empirical verification: running dedicated audit test scripts against live
+  artifacts, inspecting disk and database states directly, and deploying
+  independent audit evaluation subagents. If a claim cannot be reproduced by
+  independent execution, it is treated as a failed check.
 - Project standing rules: clean-room isolation (zero vendor data/coordinates
   stored or learned from), driver GPS is ground truth, no map scraping,
   synthetic canary payloads, Stage 002 legal gate clearance before shadow

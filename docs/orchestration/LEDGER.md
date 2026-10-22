@@ -11,7 +11,7 @@ Source of truth: `AGENTS.md`, `docs/plans/000_TOC.md`, `docs/plans/independent-m
 | Feature ID | Stage / Name | Phase | Review / Plan State | Feature Status | Notes |
 |---|---|:---:|:---:|:---:|---|
 | `DPM-F-000` | Stage 000: Master TOC & Stage Registry | All | Reviewed (Done) | `BUILT` | Audited Baseline v2.0.0 |
-| `DPM-F-001` | Stage 001: Phase 0 Landmark Seeding & Ingestion | 0 | Reviewed (Rev 2.3 applied) | `PARTIALLY_BUILT` | Ingestion pipeline verified on 50,545 rows (tools/scripts/ingest_open_pois.py); Pin Tool v2 pending |
+| `DPM-F-001` | Stage 001: Phase 0 Landmark Seeding & Ingestion | 0 | Reviewed (Rev 2.3 applied) | `BUILT` | Software artifacts verified: ingestion pipeline (50,545 rows) & Pin Tool v2 (13/13 automated audit passed); field survey campaign is ongoing operational |
 | `DPM-F-002` | Stage 002: Provenance Firewall & Legal Compliance | 0–1 | Rev 2.2 patch applied, unverified | `NOT_BUILT` | Legal gate items 3, 7, 14, 15, 16, 17 open |
 | `DPM-F-003` | Stage 003: Storage Schemas & 90-Day Evidence Ledger | 1 | Reviewed (Rev 2.6 applied) | `NOT_BUILT` | 135-day key schedule, cold-start mode, clean-room eval columns, pg_partman 5.x 90d retention, Kish weights view with active_dedup_key join, 32 canonical categories CHECK, additive Stage 004 TOD tables in §4.9, batch-2 objects in §4.10 (takedown_reports, provisional_challengers, query_clusters.published_poi_id, dual search feed views, orders.user_id stub), post_trip_labels in §4.11, osm_road_names in §4.12 |
 | `DPM-F-004` | Stage 004: OSRM Routing Engine & Dynamic Traffic | 1 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | TOD-learned speed pipeline, multiplicative correction layer k(v,b), relative ETA gates (never flat minutes), 300ms timeout, car/bike/cng profiles |
@@ -48,6 +48,9 @@ Source of truth: `AGENTS.md`, `docs/plans/000_TOC.md`, `docs/plans/independent-m
 | `DPM-T-012` | `DPM-F-003` | Apply Stage 003 Rev 2.5 additive patch (post_trip_labels staging, chk_poi_bilingual_active) | `Orchestrator` | `DPM-T-011` | `docs/plans/003_storage_schema_and_continuous_evidence_ledger.md` | `DONE` | Rev 2.5 §4.11 + changelog; Postgres dry-run pending (`DPM-R-003.md` G-P1) | 2026-10-22 |
 | `DPM-T-013` | `DPM-F-012, DPM-F-013, DPM-F-014, DPM-F-015, DPM-F-016` | Audit and apply Rev 2.1 patches to Stages 012–016 (batch 4 FINAL: anti-manipulation, geocoding, saved-places, evaluation gates, infrastructure/runbooks) | `Planning Model` | `DPM-T-012` | `docs/plans/012_*.md` … `016_*.md` | `DONE` | Rev 2.1 applied to all five; report `DPM-R-004.md` | 2026-10-22 |
 | `DPM-T-014` | `DPM-F-003` | Apply Stage 003 Rev 2.6 additive patch (invalidation CHECK widening, osm_road_names, user_private_places sovereign identity) | `Orchestrator` | `DPM-T-013` | `docs/plans/003_storage_schema_and_continuous_evidence_ledger.md` | `DONE` | Rev 2.6 §4.12 + changelog; Postgres dry-run pending (`DPM-R-004.md` G-P1) | 2026-10-22 |
+| `DPM-T-015` | `DPM-F-001` | Stage 001 Phase 0 Build: Ingestion Pipeline Script & Pin Tool v2 Implementation | `Coding Agent / Orchestrator` | `DPM-T-001` | `tools/scripts/ingest_open_pois.py`, `tools/poi-tool/`, `docs/resources/dpmaps-poi-tool.zip` | `DONE` | 50,545 stored rows verified; audit test suite `audit_test.js` 13/13 passed; v2 asset repackaged; commit `498ef2d` | 2026-10-22 |
+| `DPM-T-016` | `DPM-F-000` | Codify Zero-Trust Independent Audit Rule in AGENTS.md & DECISIONS.md | `Orchestrator` | none | `AGENTS.md`, `docs/orchestration/DECISIONS.md`, `docs/orchestration/LEDGER.md` | `DONE` | Mandatory zero-trust independent empirical audit protocol codified per owner instruction (DPM-D-021) | 2026-10-22 |
+
 
 
 
