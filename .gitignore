@@ -1,0 +1,87 @@
+# ==============================================================================
+# dpMaps .gitignore — Autonomous Geospatial & Routing Engine
+# ==============================================================================
+
+# Operating System Metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+desktop.ini
+ehthumbs.db
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# IDE & Editor Settings
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Environment, Secrets & Credentials (HARD RULE 8)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.cert
+id_rsa*
+id_ed25519*
+
+# Node.js & TypeScript
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+build/
+out/
+.tsbuildinfo
+
+# Python Environments & Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Large Geospatial Assets & Heavy Engine Artifacts
+# Note: Seed assets under docs/resources/ are tracked; raw external extracts are ignored.
+*.osm.pbf
+*.pmtiles
+*.mbtiles
+*.osrm
+*.osrm.*
+
+# Database Journaling & Temporary Files
+*.sqlite3-journal
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Pin Tool Local Development State
+tools/poi-tool/data/
+tools/poi-tool/node_modules/
+
+# Logs & Scratch Directories
+*.log
+scratch/
+tmp/
+temp/
+docs/orchestration/reports/*.log
