@@ -394,7 +394,7 @@ Captures raw trip evidence partitioned natively by week. To avoid long-term link
 > - `dropoff_geom`: Justified strictly as the physical location ground-truth needed to compute curb centroids and drop-off clusters. Re-identification is mitigated by hashing `trip_id` and driver identity, isolating user identity to 30-day Tier A logs, and applying k-anonymity gates before publication.
 > - `trip_hash`: `HMAC-SHA256(trip_id, IngestionSalt)` provides key-independent collision detection. Because `created_at` represents the deterministic handset trip completion timestamp (`trip_completed_at`) rather than ingestion time, `CONSTRAINT uq_ledger_trip UNIQUE (trip_hash, created_at)` allows dispatch retries to execute `ON CONFLICT (trip_hash, created_at) DO NOTHING` safely across network partitions.
 > - `normalized_query`: Retained for 90 days to allow normalizer ruleset replays; raw search queries with typos or potential PII are purged at 30 days in Tier A.
-> - **Rare-Query Mechanism ($\ge 3$ queries):** Evaluated in real-time by `ride_dispatch` at booking time using a fast, ephemeral Redis frequency counter (`query_freq:{cluster_id}` with 7-day TTL). If `query_freq < 3`, the trip evidence record is ingested with `vote_class = 'prefix_only'` (or staged in ephemeral Redis memory until the query threshold is achieved) before dispatch commits the row to `dpmaps.trip_evidence_ledger`. Mapping workers (`dpmaps_worker`) do not read raw search events to enforce this filter.
+> - **Rare-Query Mechanism ($\ge 3$ queries) & Commit Timing:** Query frequency classification is evaluated by `ride_dispatch` at booking time using a fast, ephemeral Redis counter (`query_freq:{cluster_id}` with 7-day TTL) and cached on the booking session. The actual evidence record is committed to `dpmaps.trip_evidence_ledger` **strictly at trip completion** when the physical driver handset GPS fix (`dropoff_geom`) and handset completion timestamp (`created_at`) are captured. If `query_freq < 3`, the record is committed with `vote_class = 'prefix_only'`. Mapping workers (`dpmaps_worker`) do not read raw search events.
 
 ```sql
 CREATE TABLE dpmaps.trip_evidence_ledger (
@@ -836,7 +836,7 @@ CREATE TABLE dpmaps.post_trip_labels (
   submitted_text VARCHAR(120) NOT NULL,
   normalized_text VARCHAR(120) NOT NULL,
   submission_type VARCHAR(16) NOT NULL CHECK (submission_type IN ('text_entry', 'chip_selection')),
-  pseudonym_hash CHAR(64) NOT NULL,
+  pseudonym_hash CHAR(64) NOT NULL,           -- Deterministic: computed via active_dedup_key.key_id for the cycle
   trip_hash CHAR(64) NOT NULL,
   publication_cycle VARCHAR(32) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1057,10 +1057,11 @@ where $\Delta t$ is elapsed time in days and $\lambda = \frac{\ln(2)}{45} \appro
 Rows in `dpmaps.trip_evidence_ledger` are **strictly append-only and immutable**. Decayed weight is calculated dynamically via PostgreSQL SQL expressions at read and aggregation time, eliminating destructive nightly `UPDATE` operations:
 
 ```sql
+-- Core 3-argument function is strictly IMMUTABLE (pure math, no hidden volatile defaults)
 CREATE OR REPLACE FUNCTION dpmaps.calculate_decayed_weight(
   p_initial_weight NUMERIC,
   p_created_at TIMESTAMPTZ,
-  p_as_of TIMESTAMPTZ DEFAULT NOW()
+  p_as_of TIMESTAMPTZ
 ) RETURNS NUMERIC AS $$
 DECLARE
   v_days NUMERIC;
@@ -1073,6 +1074,16 @@ BEGIN
   RETURN ROUND(p_initial_weight * EXP(-v_lambda * v_days), 4);
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Convenient 2-argument overload for current evaluation is STABLE (evaluates CURRENT_TIMESTAMP once per query)
+CREATE OR REPLACE FUNCTION dpmaps.calculate_decayed_weight(
+  p_initial_weight NUMERIC,
+  p_created_at TIMESTAMPTZ
+) RETURNS NUMERIC AS $$
+BEGIN
+  RETURN dpmaps.calculate_decayed_weight(p_initial_weight, p_created_at, CURRENT_TIMESTAMP);
+END;
+$$ LANGUAGE plpgsql STABLE;
 ```
 
 ### 6.3 Canonical Aggregation View & Kish Effective Sample Size

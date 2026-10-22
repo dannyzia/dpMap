@@ -17,7 +17,7 @@ Stage 004 delivers a sovereign routing infrastructure on the **Open Source Routi
 2. **Multi-Level Dijkstra (MLD) Graph Compilation:** Pre-processes the verified 339 MB Geofabrik Bangladesh extract `[VERIFIED — concept paper §21]` into partitioned cell hierarchies supporting dynamic edge-weight customization.
 3. **Near-Zero-Downtime Hot-Reloading (`osrm-datastore` & Blue/Green):** Shared-memory reload and blue/green container rotation allow frequent traffic-weight updates without dropped dispatch queries.
 4. **Bangladeshi Vehicle Lua Profiles:** Local access and speed semantics per vehicle class (width thresholds, expressway access `[UNVERIFIED]`, speed caps `[ESTIMATE]`), tag-first with curated way-ID blocklists.
-5. **First-Party Time-of-Day (TOD) Speed Harvesting:** Harmonic-mean edge velocities derived from driver GPS pings (10 s cadence, concept paper §15.4), aggregated into 30-minute TOD buckets per vehicle type, applied to the graph at bucket boundaries via `osrm-customize`, and complemented by a **learned multiplicative ETA correction layer** — because static OSRM edge weights alone cannot represent Dhaka congestion (F-004-1).
+5. **First-Party Time-of-Day (TOD) Speed Harvesting:** Harmonic-mean edge velocities derived from driver GPS pings (10 s cadence, concept paper §15.4), aggregated into 4 named TOD windows per vehicle type (`morning_peak`, `evening_peak`, `off_peak`, `night` per §6.4), applied to the graph at reload boundaries via `osrm-customize`, and complemented by a **learned multiplicative ETA correction layer** — because static OSRM edge weights alone cannot represent Dhaka congestion (F-004-1).
 6. **Relative ETA Cutover Gates:** All ETA acceptance criteria are percentages of real trip duration, benchmarked against driven GPS and against Barikoi's own measured error. **Never flat minutes** (§8.3).
 7. **OSM Dhaka Geometry Completeness Audit:** Empirical probes across Old Dhaka alleys, median openings, and flyovers. Dhaka OSM completeness is currently **`[UNVERIFIED — UNMEASURED]`** (concept paper §15.4) and must be measured before sole-mode reliance.
 
@@ -374,6 +374,9 @@ Map-matching runs on dpMaps' own OSRM with **first-party GPS** (driver GPS is gr
 // Runs only when: routing_provider_mode in {shadow, primary, sole}
 //   AND system_config.traffic_harvest_enabled = true
 //   AND Stage 002 Legal Gate Items 3, 7, 14, 15, 16, 17 signed off.
+// ARCHITECTURAL INVARIANT: Consumes asynchronously from an off-path queue (e.g. BullMQ),
+// never on the dispatch path. Traces > 100 points are split into 50-point overlapping chunks
+// (5-point overlap) to prevent OSRM /match URL length and state-space degradation.
 import axios from 'axios';
 
 interface EdgeSpeedRecord {
@@ -496,7 +499,7 @@ Buckets match the Stage 003 CHECK enumeration (`morning_peak`, `evening_peak`, `
 | `off_peak` | all remaining hours |
 
 ### 6.5 Bucket-Boundary Reload & Restricted-Segment Penalties
-- **Reload cadence:** at each 30-minute bucket boundary (and hourly within-bucket refinement), per profile: regenerate `speeds-<profile>-<bucket>.csv`, run `osrm-customize --segment-speed-file`, then `osrm-datastore` (or Blue/Green swap, §4.3).
+- **Reload cadence:** tuned during Week 1 benchmarking (hourly default; 30-minute during peak transition windows), per profile: regenerate `speeds-<profile>-<bucket>.csv`, run `osrm-customize --segment-speed-file`, then `osrm-datastore` (or Blue/Green swap, §4.3). Note that `osrm-customize` recomputes MLD customization matrices off-request-path, while `osrm-datastore` swap takes <2 seconds.
 - **Hour-dependent restrictions** (e.g., VIP-road hour rules `[UNVERIFIED]`): the CSV writer multiplies restricted segments' effective speeds by a configurable penalty (i.e., inflates duration weight) during restricted buckets. `[ESTIMATE default multiplier 5×; default-off until verified]`
 
 ### 6.6 Learned ETA Correction Layer (Read-Time, Zero Write Amplification)

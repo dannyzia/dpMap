@@ -33,7 +33,7 @@ Stage 006 implements an autonomous cartographic pipeline in two milestones:
 > **Hard Rule 7 — enforced here, tested in CI:**
 > - **Pin Tool (Stage 001/008 field tool):** Leaflet base layer = OpenStreetMap raster tiles (`tile.openstreetmap.org` or self-hosted raster) **only**. No Esri World Imagery, no Bing, no Google satellite, no Barikoi tiles — in any build flavor.
 > - **Mobile client:** MapLibre styles reference only `tiles.ride.com` (PMTiles + glyphs + sprites) and the first-party overlay (§8.2). Raster fallback layers, if any, are OSM raster only.
-> - **Compliance note:** `tile.openstreetmap.org` usage policy for production volume is `[UNVERIFIED — read the OSM tile usage policy before launch]`; a self-hosted raster stack (e.g., rendered from the same OSM extract) is the fallback if bulk usage is not permitted.
+> - **Operational Mandate:** OSMF's tile usage policy explicitly discourages field tools and intensive surveyor panning against `tile.openstreetmap.org`. To eliminate IP blocking risk and preserve clean-room independence, dpMaps deploys a self-hosted raster tile server (`tileserver-gl` or rasterized local PMTiles) for the Phase 0 Pin Tool campaign from Day 0.
 > - **Noto fonts are build-time inputs** (SIL Open Font License, fetched from the `googlefonts/noto-fonts` mirror). Fonts are not map data; at **runtime** the client loads zero Google endpoints (glyph PBFs are self-hosted, §3).
 
 ---
@@ -60,7 +60,9 @@ MapLibre renders text with SDF glyph PBFs partitioned into 256-codepoint ranges 
 - Full Bengali block `U+0980`–`U+09FF` maps to range **`2304-2559.pbf`** ($2304 = \text{0x0900}$, $2559 = \text{0x09FF}$): vowels/consonants (U+0985–U+09B9), matras (U+09BE–U+09CC), virama/halant ঍ (U+09CD) for conjuncts, digits ০–৯ (U+09E6–U+09EF), taka ৳ (U+09F3).
 - **Every fontstack named in `style.json` must have generated PBFs.** The build produces the composite stacks `Noto Sans Bengali Regular` and `Noto Sans Bengali Bold` (Bengali + Latin merged); the style references **only these stacks** (or the build additionally emits `Noto Sans Regular`/`Noto Sans Bold` stacks — both options are acceptable; mismatched references are a build failure).
 - Fontstack path segments contain spaces: the glyph URL template must serve URL-encoded names (`Noto%20Sans%20Bengali%20Regular`); MapLibre encodes automatically — the R2 worker must not double-encode.
-- Validation step: render test string *"ক্ষ জ্ঞ ০-৯ ৳ ধানমন্ডি"* headlessly and assert zero tofu boxes `[ESTIMATE tooling]`.
+- **Validation steps (Tofu vs. Complex Shaping):**
+  1. *Glyph Coverage (Headless):* Render test string *"ক্ষ জ্ঞ ০-৯ ৳ ধানমন্ডি"* headlessly and assert zero tofu boxes `[ESTIMATE tooling]`.
+  2. *Device-Level Text Shaping Test (Phase 0 Gate):* Tofu tests glyph availability, not complex Indic shaping. Render the test string on Android and iOS `maplibre-native` (and `maplibre-gl-js`) side-by-side against a native platform-shaped reference (e.g. Android `TextView`). Assert correct conjunct formation (e.g., ক্ষ formed cleanly, not decomposed as ক + ্ + ষ) and matra reordering. If shaping decomposes, activate fallback hierarchy: pre-shaped font ligatures, platform-native symbol layer for first-party places, or low-zoom Latin prioritization.
 
 ### 3.2 Automated Glyph Build (`scripts/generate-glyphs.sh`)
 ```bash
@@ -173,10 +175,10 @@ Archive notes: OpenMapTiles-compatible schema; Z14 includes building footprints,
    - `bangladesh.pmtiles`, `first_party.pmtiles`: Cache Everything, `public, max-age=2592000, immutable` **for versioned object names** (see purge strategy below).
    - `glyphs/*`: `public, max-age=31536000, immutable`.
    - `sprites/*`: `public, max-age=86400`.
-3. **Cache purge tagging (emergency suppression integration — Stage 011 §5.2 Tier D):**
-   - Every tile/glyph/sprite response carries `Cache-Tag: tiles` and, for the first-party overlay, `Cache-Tag: fp-poi`.
-   - A suppression (Stage 011) that removes a POI triggers `POST /purge_cache` with tag `fp-poi` (Cloudflare Purge by Tag), budget `< 30 s` `[ESTIMATE]`.
-   - Whole-archive rebuilds publish **versioned names** (`bangladesh-<buildhash>.pmtiles`) and atomically re-point `bangladesh.pmtiles` (copy or worker rewrite) — no purge needed for immutable objects.
+3. **Cache purge & Versioned Overlay Strategy (emergency suppression integration — Stage 011 §5.2 Tier D):**
+   - **Primary Default Posture (No Cloudflare Enterprise Dependency):** The proprietary overlay is published under versioned names (`first_party-<sha>.pmtiles`), while `first_party.pmtiles` acts as a short-TTL pointer (`Cache-Control: public, max-age=60`). Upon suppression, the tiny overlay is rebuilt (<60 s) and re-pointed. Paired with immediate client-side MapLibre feature ID filtering (`['!=', ['get', 'id'], suppressed_id]`), this satisfies the <1h SLA unconditionally without requiring Cloudflare Enterprise tag purging.
+   - **Enterprise Optimization (Optional):** If an Enterprise plan is active, responses carry `Cache-Tag: fp-poi` and purges trigger `POST /purge_cache` with tag `fp-poi` with budget `< 30 s` `[ESTIMATE]`.
+   - Whole-archive rebuilds for the large OSM base publish **versioned names** (`bangladesh-<buildhash>.pmtiles`) and atomically re-point `bangladesh.pmtiles` — immutable caching remains strictly on versioned files.
 4. **CORS:** allow `GET, HEAD` with `Range, If-None-Match` headers; expose `Content-Range, Content-Length, ETag`; origins limited to Ride app schemes + `localhost` dev hosts.
 
 ---
@@ -277,11 +279,12 @@ Adequacy of this string under ODbL §4.3 is **Legal Item 13 `[UNVERIFIED]`** pen
 ## 9. Deliverables & Definition of Done
 
 - [ ] **Hard Rule 7 enforcement test:** CI greps Pin Tool and mobile build configs for Esri/Bing/Google/Barikoi imagery endpoints — must be zero (F-006-1).
-- [ ] Glyphs: both composite stacks generate `0-255.pbf` + `2304-2559.pbf`; tofu-free render test (ক্ষ, জ্ঞ, ০-৯, ৳) (F-006-4).
+- [ ] Self-hosted raster tileserver deployed for Pin Tool field survey from Day 0, eliminating OSMF tile abuse risk.
+- [ ] Glyphs: both composite stacks generate `0-255.pbf` + `2304-2559.pbf`; tofu-free headless test AND device-level complex Indic text shaping test on MapLibre Native vs platform TextView (ক্ষ, জ্ঞ, ০-৯, ৳, ধানমন্ডি) (F-006-4).
 - [ ] Every `text-font` stack in `style.json` resolves against generated glyph PBFs (automated URL check).
 - [ ] Sprites incl. `verified_landmark`/`open_directory` badges published (§4).
 - [ ] Planetiler pipeline runs on the 339 MB extract; measured heap/runtime/output recorded in §5.1 (replacing `[ESTIMATE]`) (F-006-2).
-- [ ] R2 bucket + CDN rules + CORS deployed; **purge-tag pipeline tested end-to-end with a Stage 011 suppression** (`fp-poi` purge < 30 s `[ESTIMATE]`) (F-006-3).
+- [ ] R2 bucket + CDN rules + CORS deployed; **Tier D emergency suppression verified via versioned overlay pointer (max-age=60) + client-side MapLibre feature filter** (no Cloudflare Enterprise dependency; optional purge-tag optimization) (F-006-3).
 - [ ] `first_party.pmtiles` overlay serving verified badges from `v_search_feed_first_party`, physically separate from OSM archive (F-006-5).
 - [ ] Attribution footer rendered wherever OSM data displays; Legal Item 13 routed to counsel (F-006-6).
 - [ ] Mobile MapLibre integration on Android/iOS with corrected `addProtocol` registration; offline 45 MB bundle renders with zero network.
