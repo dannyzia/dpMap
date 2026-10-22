@@ -1,26 +1,26 @@
 # Stage 008: Search Engine (MeiliSearch) & Mixed Autocomplete Implementation Plan
 
-**Plan Identifier:** RIDE-dpMaps-PLAN-008 (Revision 2.0 — Search Engine (MeiliSearch) & Mixed Autocomplete)  
-**Stage:** 8 of 16 (Autocomplete Service & Search Orchestration)  
-**Parent Document:** [`independent-mapping-engine-concept-paper.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/independent-mapping-engine-concept-paper.md) (§2, §5.4, §13.2, §14.4, §17.2)  
-**TOC Link:** [`000_TOC.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/000_TOC.md)  
-**Current Status:** **NotDone**  
+**Plan Identifier:** RIDE-dpMaps-PLAN-008 (Revision 2.1 — Dual-Index MeiliSearch, Zero-Hit Vendor Fallback & Session Handoff)
+**Stage:** 8 of 16 (Autocomplete Service & Search Orchestration)
+**Parent Document:** [`independent-mapping-engine-concept-paper.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/independent-mapping-engine-concept-paper.md) (§2, §5.4, §13.2, §14.4, §17.2)
+**TOC Link:** [`000_TOC.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/000_TOC.md)
+**Current Status:** **NotDone**
 
 ---
 
 ## 1. Executive Summary & Objective
 
-In on-demand ride-hailing, search autocomplete is the primary user interaction funnel. A passenger typing on a smartphone while walking or riding in a vibrating rickshaw makes frequent typographical errors, inputs phonetic Banglish, and expects relevant suggestions within 3–4 keystrokes. If search latency exceeds **50ms**, the mobile interface stutters, leading to user drop-off and booking abandonment.
+In on-demand ride-hailing, search autocomplete is the primary user interaction funnel. A passenger typing on a smartphone while walking or riding in a vibrating rickshaw makes frequent typographical errors, inputs phonetic Banglish, and expects relevant suggestions within 3–4 keystrokes. If search latency exceeds **50 ms `[ESTIMATE]`**, the mobile interface stutters, leading to user drop-off.
 
-Furthermore, if the platform relies exclusively on commercial vendor autocomplete during pre-launch and Phase 1, rider destination selections will perpetually mirror the vendor’s proprietary catalog. This creates a severe **exposure bias** (Concept Paper §5.4) that deprives local first-party landmarks of trip votes and keeps the platform permanently dependent on commercial APIs.
+If the platform relies exclusively on commercial vendor autocomplete during pre-launch and Phase 1, rider destination selections will perpetually mirror the vendor's proprietary catalog — a severe **exposure bias** (concept paper §5.4) that deprives first-party landmarks of trip votes.
 
-Stage 008 delivers an autonomous, high-throughput search infrastructure:
-1. **The MeiliSearch In-Memory Cluster:** Delivers sub-10ms prefix and typographic search across both proprietary landmarks and OpenStreetMap baseline POIs, featuring native `_geo` spatial proximity ranking.
-2. **Consolidated Search View Ingestion (`dpmaps.v_search_feed`):** Synchronizes ~52,000 initial documents (2,000+ clean-room landmarks from `public_pois` + 49,881 baseline POIs from `osm_pois`) with sub-second incremental updates and instant takedown deletion.
-3. **Clean-Room Vendor Client Integration:** Decouples vendor autocomplete from raw SDKs. Vendor suggestions are fetched strictly via `vendorClientWrapper.fetchSafeVendorSuggestions` (Stage 002), enforcing the response-only invariant (zero database persistence, zero telemetry logging).
-4. **Integration with Stage 007 Normalizer:** Applies 6-stage orthographic normalization, numeral folding (`০-৯` $\rightarrow$ `0-9`), and digit locking before querying search indexes.
-5. **The Mixed Autocomplete Orchestrator:** Breaks vendor exposure bias from Day 1 by interleaving verified dpMaps landmarks at the top of search dropdowns with distinct `"Ride Verified"` UI badging.
-6. **Search Telemetry & Failure Gap Runbooks:** Captures clean evaluation telemetry in `dpmaps.search_eval_events` (Tier B, 30-day retention) and establishes fallbacks for residential holding numbers, long-tail venues, and categorical radius searches.
+Stage 008 delivers an autonomous search infrastructure:
+1. **Physically Isolated Dual Indexes:** `first_party_pois` (proprietary clean-room landmarks) and `osm_pois` (ODbL open data) are **two completely separate MeiliSearch indexes on disk**. They are merged **only at query time in RAM** by the search API — never physically combined or co-indexed (Hard Rule 1, Architectural Invariant 4).
+2. **Mixed Autocomplete from Launch:** the client receives a unified, deduplicated suggestion list with provenance badges — `Verified Landmark` (first-party) and `Open Directory` (OSM) — from the first day of Phase 1.
+3. **Zero-Hit Vendor Fallback:** in `primary` mode, vendor search is called **strictly when local search returns zero results**. One valid local result ⇒ zero vendor calls.
+4. **Atomic Session Handoff:** a tapped vendor suggestion hands its coordinates to dispatch via Redis `dest_session:<session_token>` (TTL 15 min, atomic `GETDEL`); vendor coordinates never persist in Ride mapping tables.
+5. **Clean-Room Vendor Integration:** vendor suggestions flow exclusively through `vendorClientWrapper.fetchSafeVendorSuggestions` (Stage 002) — response-only, zero persistence, zero telemetry logging of vendor strings.
+6. **Popularity & Bilingual Ranking:** query-cluster popularity and decayed historical vote weights (aggregated only — **never raw keystrokes**) feed ranking; Bangla-script and transliterated prefixes both resolve.
 
 > [!CAUTION]
 > ### MANDATORY LEGAL GATE PREREQUISITE
@@ -28,25 +28,34 @@ Stage 008 delivers an autonomous, high-throughput search infrastructure:
 
 ---
 
-## 2. MeiliSearch Cluster Sizing & Index Configuration
-
-MeiliSearch provides an in-memory, C++ / Rust search engine optimized for interactive typeahead search:
+## 2. Cluster Sizing & Dual-Index Configuration
 
 | Metric / Resource | Staging & Phase 1 Tier (500–2,000 rides/day) | Scale Production Tier (10,000–25,000 rides/day) |
 |---|---|---|
-| **Host Instance** | 1× Cloud VPS (2 vCPU / 4 GB RAM) | 2× Cloud VPS High-Availability (4 vCPU / 8 GB RAM) |
-| **Peak Search QPS** | 5 – 15 QPS | 50 – 150 QPS |
-| **Index Footprint** | ~52,000 POIs (~85 MB RAM in-memory) | 500,000+ POIs & Aliases (~600 MB RAM in-memory) |
+| **Host Instance** | 1× Cloud VPS (2 vCPU / 4 GB RAM) `[ESTIMATE]` | 2× Cloud VPS HA (4 vCPU / 8 GB RAM) `[ESTIMATE]` |
+| **Peak Search QPS** | 5 – 15 QPS `[ESTIMATE]` | 50 – 150 QPS `[ESTIMATE]` |
+| **Index Footprint** | ~52,000 POIs total `[ESTIMATE: 2,000+ first-party + 49,881 OSM per Stage 001]` | 500,000+ docs & aliases `[ESTIMATE]` |
 | **Storage Allocation**| 40 GB NVMe SSD | 100 GB NVMe SSD |
-| **Query Latency SLA** | **Sub-10ms in-memory (p95 < 15ms)** | **Sub-8ms in-memory (p95 < 12ms)** |
+| **Query Latency SLA** | p95 < 15 ms `[ESTIMATE — measure]` | p95 < 12 ms `[ESTIMATE — measure]` |
 
-### 2.1 Index Configuration (`dpmaps_places`)
+### 2.1 The Physical Isolation Invariant (F-008-1)
+
+> [!IMPORTANT]
+> **Two indexes, two disks, one RAM merge.**
+> - `first_party_pois` — proprietary `dpmaps.public_pois` + `dpmaps.poi_aliases` documents (`id: "pub_<uuid>"`). License: first-party proprietary.
+> - `osm_pois` — ODbL `dpmaps.osm_pois` documents (`id: "osm_<osm_type>:<osm_id>"`, e.g. `osm_M:1024`). License: ODbL attribution required.
+> - The two indexes live in separate MeiliSearch data directories. No document from one index may ever be written to the other; no union index may exist in any environment. Measured merge happens **only in the search API process, in memory, per request** (§4).
+> - Suppression (Stage 011) purges each index independently.
+
+### 2.2 Index Settings (identical schema for both indexes)
+
 ```json
 {
   "searchableAttributes": [
     "canonical_name",
     "bangla_name",
     "search_aliases",
+    "bengali_phonetic_keys",
     "category",
     "point_type"
   ],
@@ -55,12 +64,12 @@ MeiliSearch provides an in-memory, C++ / Rust search engine optimized for intera
     "category",
     "point_type",
     "h3_res9",
-    "is_first_party",
-    "license_type"
+    "lifecycle_status"
   ],
   "sortableAttributes": [
     "_geo",
-    "confidence_score"
+    "confidence_score",
+    "popularity"
   ],
   "rankingRules": [
     "words",
@@ -72,55 +81,47 @@ MeiliSearch provides an in-memory, C++ / Rust search engine optimized for intera
   ],
   "typoTolerance": {
     "enabled": true,
-    "minWordSizeForTypos": {
-      "oneTypo": 4,
-      "twoTypos": 8
-    },
+    "minWordSizeForTypos": { "oneTypo": 4, "twoTypos": 8 },
     "disableOnWords": [
-      "rd", "road", "sec", "sector", "blk", "block", 
+      "rd", "road", "sec", "sector", "blk", "block",
       "gali", "lane", "mor", "gate", "bridge", "bazaar"
     ],
     "disableOnNumbers": true
   },
-  "pagination": {
-    "maxTotalHits": 20
-  }
+  "pagination": { "maxTotalHits": 20 }
 }
 ```
 
 > [!IMPORTANT]
-> **Digit Preservation Invariant:** Notice that `"disableOnNumbers": true` is enforced in the typo tolerance configuration. In accordance with Stage 007's Hard Digit Locking Rule, numbers in search queries (e.g., *"Road 4"* vs. *"Road 7"*) must never be fuzzy-matched.
+> **Digit Preservation Invariant:** `"disableOnNumbers": true` enforces Stage 007 Hard Digit Locking — *"Road 4"* vs *"Road 7"* is never fuzzy-matched. MeiliSearch typo behavior on Bengali script is `[UNVERIFIED — verify in staging before launch]`.
 
 ---
 
-## 3. PostGIS Search View Synchronization Pipeline
+## 3. Dual-Source Synchronization Pipeline
 
-MeiliSearch indexes the unified database view `dpmaps.v_search_feed` (Stage 003 §7), which cleanly separates proprietary landmarks from open-source baseline data:
+Each index is fed by its own PostGIS source view (additive views defined in the Stage 003 Rev 2.4 brief, Part F of the batch-2 audit plan):
 
 ```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                        SEARCH VIEW SYNCHRONIZATION ARCHITECTURE                        │
-├──────────────────────────────┬─────────────────────────────────────────────────────────┤
-│ PostgreSQL Source View       │ MeiliSearch Document Mapping                            │
-├──────────────────────────────┼─────────────────────────────────────────────────────────┤
-│ `dpmaps.v_search_feed`       │ `dpmaps_places` Index                                   │
-│ • document_id                │ `id`: "pub_8f92b..." or "osm_1092819_M"                 │
-│ • display_name               │ `canonical_name`: "Jamuna Future Park"                  │
-│ • bangla_name                │ `bangla_name`: "যমুনা ফিউচার পার্ক"                     │
-│ • category                   │ `category`: "shopping_mall"                             │
-│ • point_type                 │ `point_type`: "building_entrance"                       │
-│ • h3_res9, h3_res10          │ `h3_res9`: "896541...", `h3_res10`: "8a6541..."         │
-│ • lat, lng                   │ `_geo`: { "lat": 23.8134, "lng": 90.4242 }             │
-│ • search_aliases             │ `search_aliases`: ["JFP", "Jamuna Mall", "Ka-244"]      │
-│ • confidence_score           │ `confidence_score`: 0.9850                              │
-│ • is_first_party             │ `is_first_party`: true                                  │
-│ • license_type               │ `license_type`: "first_party_proprietary"               │
-└──────────────────────────────┴─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────┬───────────────────────────────────────────┐
+│ PostgreSQL Source View           │ MeiliSearch Document Mapping              │
+├──────────────────────────────────┼───────────────────────────────────────────┤
+│ dpmaps.v_search_feed_first_party │ INDEX first_party_pois                    │
+│  (public_pois + poi_aliases)     │  id: "pub_<uuid>"                         │
+│                                  │  license_type: "first_party_proprietary"  │
+├──────────────────────────────────┼───────────────────────────────────────────┤
+│ dpmaps.v_search_feed_osm         │ INDEX osm_pois                            │
+│  (dpmaps.osm_pois, ODbL)         │  id: "osm_<osm_type>:<osm_id>"            │
+│                                  │  license_type: "osm_odbl_attributed"      │
+└──────────────────────────────────┴───────────────────────────────────────────┘
+  Document fields (both): canonical_name, bangla_name, search_aliases,
+  bengali_phonetic_keys, category, point_type, h3_res9, h3_res10,
+  _geo {lat,lng}, confidence_score, popularity, lifecycle_status
 ```
 
-### 3.1 Synchronization Worker (`workers/meiliSyncWorker.ts`)
+### 3.1 Synchronization Workers (`workers/meiliSyncWorker.ts`)
+
 ```typescript
-// workers/meiliSyncWorker.ts
+// workers/meiliSyncWorker.ts — writes ONE index per worker call; no cross-writes.
 import { MeiliSearch } from 'meilisearch';
 import { db } from '../lib/db';
 import { logger } from '../utils-server/logger';
@@ -130,103 +131,93 @@ const meili = new MeiliSearch({
   apiKey: process.env.MEILI_MASTER_KEY
 });
 
+type FeedSpec = {
+  indexName: 'first_party_pois' | 'osm_pois'; // F-008-1: physical isolation
+  sourceView: 'dpmaps.v_search_feed_first_party' | 'dpmaps.v_search_feed_osm';
+};
+
+const FEEDS: FeedSpec[] = [
+  { indexName: 'first_party_pois', sourceView: 'dpmaps.v_search_feed_first_party' },
+  { indexName: 'osm_pois', sourceView: 'dpmaps.v_search_feed_osm' }
+];
+
 export async function runFullMeiliSync(): Promise<void> {
-  const index = meili.index('dpmaps_places');
-  logger.info('[meiliSyncWorker] Starting full sync from dpmaps.v_search_feed...');
-
-  const query = `
-    SELECT 
-      document_id AS id,
-      display_name AS canonical_name,
-      bangla_name,
-      category,
-      point_type,
-      h3_res9,
-      h3_res10,
-      json_build_object('lat', lat, 'lng', lng) AS _geo,
-      search_aliases,
-      confidence_score,
-      is_first_party,
-      license_type
-    FROM dpmaps.v_search_feed;
-  `;
-
-  const { rows } = await db.query(query);
-  logger.info({ totalRows: rows.length }, '[meiliSyncWorker] Fetched feed rows; uploading in batches of 5000...');
-
-  const BATCH_SIZE = 5000;
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE);
-    const task = await index.addDocuments(batch);
-    logger.info({ batchIndex: i / BATCH_SIZE, taskId: task.taskUid }, '[meiliSyncWorker] Enqueued batch upload');
+  for (const feed of FEEDS) {
+    const index = meili.index(feed.indexName);
+    const { rows } = await db.query(`SELECT * FROM ${feed.sourceView}`);
+    logger.info({ index: feed.indexName, totalRows: rows.length }, '[meiliSync] upserting');
+    const BATCH_SIZE = 5000; // [ESTIMATE]
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const task = await index.addDocuments(rows.slice(i, i + BATCH_SIZE));
+      logger.info({ batch: i / BATCH_SIZE, taskId: task.taskUid }, '[meiliSync] enqueued');
+    }
   }
-
-  logger.info('[meiliSyncWorker] Full sync completed successfully.');
 }
 
 /**
- * Instant Takedown Purge Handler:
- * Executes within seconds of judicial or privacy suppression.
+ * Instant Takedown Purge (Stage 011 integration): evicts from BOTH indexes by ID prefix.
+ * "pub_*" -> first_party_pois; "osm_*" -> osm_pois. Seconds-level, bypasses monthly releases.
  */
-export async function purgeSuppressedPoiFromSearch(poiId: string): Promise<void> {
-  const index = meili.index('dpmaps_places');
-  const documentId = `pub_${poiId}`;
-  await index.deleteDocument(documentId);
-  logger.info({ documentId }, '[meiliSyncWorker] Purged suppressed POI from MeiliSearch index');
+export async function purgeSuppressedFromSearch(documentId: string): Promise<void> {
+  const target = documentId.startsWith('pub_') ? 'first_party_pois'
+    : documentId.startsWith('osm_') ? 'osm_pois' : null;
+  if (!target) return;
+  await meili.index(target).deleteDocument(documentId);
+  logger.info({ documentId, target }, '[meiliSync] purged suppressed document');
 }
 ```
 
 ---
 
-## 4. The Mixed Autocomplete Orchestrator
-
-To break vendor exposure bias from Day 1, the backend client orchestrator queries both local MeiliSearch and external commercial vendors in parallel, applying strict result fusion and badging:
+## 4. The Mixed Autocomplete Orchestrator (query-time RAM merge)
 
 ```
-                           [ Rider Types in Search Input ]
-                                         │
-                                         ▼
-                     [ 1. Stage 007 Normalizer Pre-Processing ]
-                     • Unicode NFC & invisible glyph stripping
-                     • Bengali digit folding: [০-৯] -> [0-9]
-                     • Dhaka abbreviation expansion: "jfp" -> "jamuna future park"
-                                         │
-                                         ▼
-                     [ utils-server/searchOrchestrator.ts ]
-                                         │
-                   ┌─────────────────────┴─────────────────────┐
-                   ▼                                           ▼
-         [ 2. Local MeiliSearch ]                    [ 3. Vendor Client Wrapper ]
-         • Port 7700 (in-memory)                     • fetchSafeVendorSuggestions()
-         • Sub-10ms query latency                    • 120–250ms external network
-         • _geoRadius(user, 35km)                    • Emits SafeVendorSuggestion[]
-         • _geoPoint proximity sort                  • Ephemeral temp_client_id
-                   │                                           │
-                   └─────────────────────┬─────────────────────┘
-                                         │
-                                         ▼
-                         [ 4. Result Fusion & Badging ]
-                         ├── Slot 1-2: High-confidence dpMaps verified POIs
-                         │   (Badged with "Ride Verified" green tag)
-                         ├── Slot 3-6: Safe vendor suggestions
-                         │   (Display text response-only; temp_client_id)
-                         └── Deduplication: Suppress vendor entry if
-                             spatial overlap < 30m with first-party POI
-                                         │
-                                         ▼
-                       [ Return to Mobile Dropdown (<40ms total) ]
+              [ Rider Types in Search Input ]
+                            │
+                            ▼
+            [ 1. Stage 007 Normalizer Pre-Processing ]
+            • Unicode NFC, invisible glyph stripping
+            • Bengali digit folding [০-৯] -> [0-9]; digit locking preserved
+            • Abbreviation & transliteration expansion (Stage 007)
+                            │
+                            ▼
+            [ utils-server/searchOrchestrator.ts ]
+                            │
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+ [ first_party_pois ]  [ osm_pois ]   [ Vendor Wrapper (mode-dependent) ]
+  (Meili, port 7700)   (Meili)        fetchSafeVendorSuggestions()
+        │                   │                   │
+        └───────────────────┴───────────────────┘
+                            │
+                            ▼
+            [ 4. RAM Merge, Dedupe & Badging ]   ◄── the ONLY merge point
+            • Precedence: first_party > osm > vendor
+            • Cross-source dedupe: keep the higher-precedence hit when
+              a competitor lies within 30 m [ESTIMATE radius]
+            • Badges: "Verified Landmark" (first_party),
+                      "Open Directory" (osm), vendor rows unbaged/display-only
+            • Sort: popularity + _geo proximity + confidence
+                            │
+                            ▼
+          [ Return unified list to mobile dropdown (< 40 ms total) [ESTIMATE] ]
 ```
+
+**Mode semantics:**
+- `0: off` — vendor only (legal lock / maintenance). No local indexes queried; Tier A rows only on rider selection, impressions metrics-only.
+- `1: shadow` (launch default) — parallel local + vendor; fused mixed list **from launch** (F-008-2).
+- `2: primary` — local first; **vendor called strictly on zero local results** (F-008-3). If local returns ≥ 1 valid hit, zero vendor calls.
+- `3: sole` — local only; zero external calls.
 
 ### 4.1 Orchestrator Implementation (`utils-server/searchOrchestrator.ts`)
+
 ```typescript
 // utils-server/searchOrchestrator.ts
 import { MeiliSearch } from 'meilisearch';
 import { getPlatformConfig } from '../lib/platformConfig';
-import { normalizeSearchQuery } from './textNormalizer';
-import { 
-  fetchSafeVendorSuggestions, 
-  SafeVendorSuggestion 
-} from './vendorClientWrapper';
+import { normalizeSearchQuery, scrubPii } from './textNormalizer';
+import { fetchSafeVendorSuggestions, SafeVendorSuggestion } from './vendorClientWrapper';
+import { recordDestinationSession } from './destinationSession'; // §5
 import { db } from '../lib/db';
 import { logger } from './logger';
 
@@ -240,157 +231,198 @@ export interface AutocompleteItem {
   title: string;
   subtitle: string;
   category: string;
-  source: 'dpmaps_local' | 'vendor';
-  is_verified_first_party: boolean;
-  temp_client_id?: string;               // Present ONLY for vendor suggestions
-  coords?: { lat: number; lng: number }; // Present ONLY for dpmaps_local
+  source: 'first_party' | 'osm' | 'vendor';
+  badge: 'verified_landmark' | 'open_directory' | null;
+  session_token?: string;              // vendor suggestions only (F-008-4; renamed from temp_client_id)
+  coords?: { lat: number; lng: number }; // local hits only
+  _fusePos?: { lat: number; lng: number }; // ephemeral vendor fusion hint; stripped before HTTP response
 }
 
 export async function getMixedAutocomplete(
-  rawQuery: string,
-  userLat?: number,
-  userLng?: number
+  rawQuery: string, userLat?: number, userLng?: number
 ): Promise<AutocompleteItem[]> {
-  const startTime = Date.now();
+  const started = Date.now();
   const mode = (await getPlatformConfig('search_provider_mode')) ?? 'off';
-
-  // 1. Pre-process query via Stage 007 Normalizer
   const normalized = normalizeSearchQuery(rawQuery);
-  const searchString = normalized.normalized_query;
+  const q = normalized.normalized_query;
+  if (q.length < 2) return [];
 
-  if (searchString.length < 2) return [];
+  const local = async () => mergeLocalIndexes(q, userLat, userLng); // RAM merge of 2 indexes
+  const vendor = async () =>
+    fetchSafeVendorSuggestions(rawQuery,
+      userLat !== undefined && userLng !== undefined ? { lat: userLat, lng: userLng } : undefined);
 
-  // 2. Mode 3: Sole Sovereign Operation (Zero external vendor calls)
+  let items: AutocompleteItem[];
+
   if (mode === 'sole') {
-    const localHits = await queryMeili(searchString, userLat, userLng);
-    logSearchTelemetry(rawQuery, 'dpmaps', Date.now() - startTime, localHits.length);
-    return localHits.map(formatLocalHit);
-  }
-
-  // 3. Mode 2: Primary Operation (Local first; vendor fallback only on sparse results)
-  if (mode === 'primary') {
-    const localHits = await queryMeili(searchString, userLat, userLng);
-    if (localHits.length >= 4) {
-      logSearchTelemetry(rawQuery, 'dpmaps', Date.now() - startTime, localHits.length);
-      return localHits.map(formatLocalHit);
+    items = await local();
+  } else if (mode === 'primary') {
+    const hits = await local();
+    // F-008-3: vendor strictly on ZERO local results
+    if (hits.length > 0) {
+      items = hits;
+    } else {
+      items = (await vendor()).map(formatVendorSuggestion);
     }
-
-    // Sparse hits (<4): supplement with vendor suggestions
-    const vendorSuggestions = await fetchSafeVendorSuggestions(rawQuery, userLat && userLng ? { lat: userLat, lng: userLng } : undefined);
-    const combined = [
-      ...localHits.map(formatLocalHit),
-      ...vendorSuggestions.map(formatVendorSuggestion)
-    ];
-    logSearchTelemetry(rawQuery, 'dpmaps_primary_mixed', Date.now() - startTime, combined.length);
-    return combined.slice(0, 6);
-  }
-
-  // 4. Mode 1: Shadow & Mixed Operation (Parallel query, exposure-breaking fusion)
-  if (mode === 'shadow') {
-    const [localHits, vendorSuggestions] = await Promise.all([
-      queryMeili(searchString, userLat, userLng).catch(() => []),
-      fetchSafeVendorSuggestions(rawQuery, userLat && userLng ? { lat: userLat, lng: userLng } : undefined).catch(() => [])
+  } else if (mode === 'shadow') {
+    const [hits, vend] = await Promise.all([
+      local().catch(() => [] as AutocompleteItem[]),
+      vendor().catch(() => [] as SafeVendorSuggestion[])
     ]);
-
-    // Exposure-breaking fusion:
-    // Filter local hits with confidence >= 0.85
-    const verifiedLocal = localHits
-      .filter(h => h.is_first_party && h.confidence_score >= 0.85)
-      .map(formatLocalHit);
-
-    const standardLocal = localHits
-      .filter(h => !h.is_first_party || h.confidence_score < 0.85)
-      .map(formatLocalHit);
-
-    const vendorItems = vendorSuggestions.map(formatVendorSuggestion);
-
-    // Pin up to 2 verified first-party items at the top
-    const results: AutocompleteItem[] = [];
-    results.push(...verifiedLocal.slice(0, 2));
-
-    // Interleave remaining local and vendor suggestions
-    for (let i = 0; i < Math.max(standardLocal.length, vendorItems.length); i++) {
-      if (vendorItems[i]) results.push(vendorItems[i]);
-      if (standardLocal[i]) results.push(standardLocal[i]);
-      if (results.length >= 6) break;
-    }
-
-    logSearchTelemetry(rawQuery, 'shadow_mixed', Date.now() - startTime, results.length);
-    return results.slice(0, 6);
-  }
-
-  // 5. Mode 0: Off (100% Vendor suggestions)
-  const vendorSuggestions = await fetchSafeVendorSuggestions(rawQuery, userLat && userLng ? { lat: userLat, lng: userLng } : undefined);
-  logSearchTelemetry(rawQuery, 'vendor', Date.now() - startTime, vendorSuggestions.length);
-  return vendorSuggestions.map(formatVendorSuggestion).slice(0, 6);
-}
-
-async function queryMeili(searchString: string, userLat?: number, userLng?: number) {
-  const index = meili.index('dpmaps_places');
-  const searchParams: any = { limit: 6 };
-
-  if (userLat && userLng) {
-    searchParams.filter = `_geoRadius(${userLat}, ${userLng}, 35000)`; // 35 km metro radius
-    searchParams.sort = [`_geoPoint(${userLat}, ${userLng}):asc`, 'confidence_score:desc'];
+    items = fuse(hits, vend.map(formatVendorSuggestion)); // unified dedupe + badges
   } else {
-    searchParams.sort = ['confidence_score:desc'];
+    items = (await vendor()).map(formatVendorSuggestion);
   }
 
-  const response = await index.search(searchString, searchParams);
-  return response.hits;
+  // Refinement (F-008-6): raw_search_events is written at SELECTION time (the rider tap) —
+  // its columns record the actual selection. Unselected impressions feed only Prometheus
+  // counters (dpmaps_search_impressions_total / latency histogram in metrics.ts); no guessed
+  // selected_source is ever persisted. Evaluation rows (search_success etc.) are written
+  // post-trip by the Stage 015 evaluator into dpmaps.search_eval_events — never here.
+  return items.slice(0, 6).map(stripEphemeral);
 }
 
-function formatLocalHit(hit: any): AutocompleteItem {
+/** Rider tap → Tier A selection row (Stage 003 §4.7 raw_search_events). */
+export async function recordSearchSelection(
+  userId: string,
+  rawQuery: string,
+  item: AutocompleteItem,
+  latencyMs: number
+): Promise<void> {
+  const selectedSource = item.source === 'vendor' ? 'vendor'
+    : item.source === 'osm' ? 'osm' : 'dpmaps';
+  await db.query(
+    `INSERT INTO dpmaps.raw_search_events (user_id, typed_query, selected_source, selected_place_id, latency_ms)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [userId, scrubPii(rawQuery).substring(0, 80), selectedSource,
+     selectedSource === 'vendor' ? null : item.id, latencyMs] // chk_raw_vendor_place_null
+  ).catch(err => logger.error({ err }, '[searchOrchestrator] selection log failed'));
+}
+
+/** Query-time RAM merge of the two physical indexes (F-008-1). */
+async function mergeLocalIndexes(q: string, userLat?: number, userLng?: number): Promise<AutocompleteItem[]> {
+  const params: Record<string, unknown> = { limit: 10 };
+  if (userLat !== undefined && userLng !== undefined) {
+    params.filter = `_geoRadius(${userLat}, ${userLng}, 35000)`; // [ESTIMATE] 35 km metro
+    params.sort = [`_geoPoint(${userLat}, ${userLng}):asc`, 'popularity:desc', 'confidence_score:desc'];
+  } else {
+    params.sort = ['popularity:desc', 'confidence_score:desc'];
+  }
+  const [fp, osm] = await Promise.all([
+    meili.index('first_party_pois').search(q, params).then(r => r.hits),
+    meili.index('osm_pois').search(q, params).then(r => r.hits)
+  ]);
+  return fuse([
+    ...fp.map(h => formatLocalHit(h, 'first_party')),
+    ...osm.map(h => formatLocalHit(h, 'osm'))
+  ], []);
+}
+
+/** Precedence first_party > osm > vendor; 30 m cross-source dedupe (F-008-2).
+ *  Refinement: vendor rows carry an EPHEMERAL in-memory fusion position (`approx_coords`
+ *  from the wrapper) used only here — never persisted, logged, or returned to the client
+ *  (stripped by `stripEphemeral`). Without it, a vendor row previously could never be
+ *  deduped against local hits. Fallback when absent: normalized-title equality. */
+function fuse(local: AutocompleteItem[], vendorItems: AutocompleteItem[]): AutocompleteItem[] {
+  const rank = (i: AutocompleteItem) => i.source === 'first_party' ? 0 : i.source === 'osm' ? 1 : 2;
+  const pos = (i: AutocompleteItem): { lat: number; lng: number } | undefined =>
+    i.coords ?? i._fusePos;
+  const ordered = [...local, ...vendorItems].sort((a, b) => rank(a) - rank(b));
+  const kept: AutocompleteItem[] = [];
+  for (const item of ordered) {
+    const p2 = pos(item);
+    const dup = kept.some(k => {
+      const p1 = pos(k);
+      if (p1 && p2) return haversineMeters(p1, p2) < 30; // [ESTIMATE]
+      return k.title.trim().toLowerCase() === item.title.trim().toLowerCase();
+    });
+    if (!dup) kept.push(item);
+  }
+  return kept;
+}
+
+function formatLocalHit(hit: any, source: 'first_party' | 'osm'): AutocompleteItem {
   return {
     id: hit.id,
-    title: hit.canonical_name,
-    subtitle: hit.bangla_name || hit.category,
+    title: hit.canonical_name ?? hit.bangla_name,
+    subtitle: hit.bangla_name ?? hit.category,
     category: hit.category,
-    source: 'dpmaps_local',
-    is_verified_first_party: hit.is_first_party === true,
+    source,
+    badge: source === 'first_party' ? 'verified_landmark' : 'open_directory',
     coords: hit._geo ? { lat: hit._geo.lat, lng: hit._geo.lng } : undefined
   };
 }
 
-function formatVendorSuggestion(suggestion: SafeVendorSuggestion): AutocompleteItem {
+function formatVendorSuggestion(s: SafeVendorSuggestion): AutocompleteItem {
   return {
-    id: `vendor_${suggestion.temp_client_id}`,
-    title: suggestion.display_name,
-    subtitle: suggestion.secondary_text,
-    category: suggestion.category,
+    id: `vendor_${s.session_token}`,
+    title: s.display_name,        // response-only; never persisted (Stage 002)
+    subtitle: s.secondary_text,
+    category: s.category,
     source: 'vendor',
-    is_verified_first_party: false,
-    temp_client_id: suggestion.temp_client_id
+    badge: null,
+    session_token: s.session_token, // renamed from temp_client_id (Part F X-2)
+    _fusePos: s.approx_coords       // ephemeral in-memory fusion hint (refinement); stripped pre-response
   };
 }
 
-/**
- * Logs search evaluation telemetry strictly to Tier B table.
- * Notice: Zero vendor display text or coordinates are persisted.
- */
-async function logSearchTelemetry(
-  typedQuery: string, 
-  source: string, 
-  latencyMs: number, 
-  resultCount: number
-): Promise<void> {
-  // Capped at 80 characters per Stage 002
-  const sanitizedQuery = typedQuery.substring(0, 80);
-
-  await db.query(
-    `INSERT INTO dpmaps.search_eval_events 
-      (typed_query, selected_source, latency_ms, result_count)
-     VALUES ($1, $2, $3, $4)`,
-    [sanitizedQuery, source, latencyMs, resultCount]
-  ).catch(err => logger.error({ err }, '[searchOrchestrator] Failed to log search telemetry'));
+/** Strips the ephemeral fusion hint before the HTTP response (vendor positions never leave memory). */
+function stripEphemeral(i: AutocompleteItem): AutocompleteItem {
+  const pub = { ...i } as Record<string, unknown>;
+  delete pub._fusePos;
+  return pub as AutocompleteItem;
 }
 ```
 
 ---
 
-## 5. Search Failure Gap Mitigations (Sole Mode Runbook)
+## 5. Destination Session Handoff Contract (F-008-4)
 
-When operating in Mode 3 (Sole Sovereign), certain query types may yield zero direct matches on the local gazetteer. The search orchestrator implements automated fallbacks:
+When a rider taps a **vendor** suggestion, dispatch later needs its coordinates. The contract:
+
+| Element | Value |
+|---|---|
+| Key | `dest_session:<session_token>` (`session_token` = server-minted ephemeral UUID v4) |
+| Value | `{ lat, lng }` only — vendor coordinates, never names/IDs/polylines |
+| TTL | **15 minutes** (single session handoff window) |
+| Read | **atomic `GETDEL`** (Redis ≥ 6.2; ioredis `getdel` / node-redis `getDel`) by Ride dispatch — single use |
+| On miss/expiry | fail safe: prompt rider reselection; **no database fallback, no vendor re-query** |
+| Persistence | **none** — vendor coordinates never enter `public_pois`, `osm_pois`, or any Ride core table (Hard Rule 1) |
+
+```typescript
+// utils-server/destinationSession.ts
+import { redisClient } from '../lib/redis';
+import { randomUUID } from 'crypto';
+
+export async function recordDestinationSession(coords: { lat: number; lng: number }): Promise<string> {
+  const sessionToken = randomUUID();
+  await redisClient.set(`dest_session:${sessionToken}`, JSON.stringify(coords), 'EX', 900); // 15 min
+  return sessionToken;
+}
+
+export async function consumeDestinationSession(sessionToken: string): Promise<{ lat: number; lng: number } | null> {
+  const raw = await redisClient.getdel(`dest_session:${sessionToken}`); // atomic single-use
+  return raw ? JSON.parse(raw) : null;
+}
+```
+
+**Cross-plan note (single mechanism):** the search-side write path is authoritative: `dest_session:<session_token>`, TTL 15 min, atomic `GETDEL`. Stage 005's dispatch resolver consumes that same key; Stage 002's `vendor:resolve:<temp_client_id>` (120 s) is **superseded** and must be renamed/retired in its next audit (Part F X-2). Two Stage 002 wrapper contract changes ride along: `SafeVendorSuggestion.temp_client_id` → `session_token`, and an optional `approx_coords` field used **in memory only** for the §4 fusion dedupe (never persisted, logged, or returned to the client).
+
+---
+
+## 6. Query Popularity & Bilingual Ranking (F-008-5)
+
+The `popularity` sortable attribute is computed at sync time from **aggregated first-party signals only**:
+
+$$\text{popularity} = \ln\!\left(1 + \sum_c \text{decayed\_cluster\_weight}(c)\right) + \alpha \cdot \ln(1 + \text{selections}_{30d}) \qquad [\alpha = 0.5\ ESTIMATE]$$
+
+- `decayed_cluster_weight` comes from `dpmaps.mv_cluster_evidence_stats.sum_weights` (Stage 003 §6.3 — read-time decay, zero write amplification) via the place's `query_clusters` association.
+- `selections_{30d}` is an **aggregated count** from evaluation tables. **No raw keystroke streams** ever enter ranking (Hard Rule 8); typed text exists only in Tier A `raw_search_events` for 30 days.
+- **Bilingual prefixes:** `bangla_name` and `bengali_phonetic_keys` (aggregated Stage 007 phonetic keys from `dpmaps.query_clusters.bengali_phonetic_key`) are searchable; English transliteration aliases live in `search_aliases`. A Bangla-script prefix and its Latin transliteration must return overlapping candidate sets `[UNVERIFIED — validate MeiliSearch Bengali tokenization in staging]`.
+
+---
+
+## 7. Search Failure Gap Mitigations (Sole Mode Runbook)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -399,41 +431,45 @@ When operating in Mode 3 (Sole Sovereign), certain query types may yield zero di
 │ Query Category      │ Failure Mechanism                  │ dpMaps Automated Fallback   │
 ├─────────────────────┼────────────────────────────────────┼─────────────────────────────┤
 │ 1. Exact Holding    │ OSM lacks building-level holding   │ Parse street & road tokens; │
-│    Numbers          │ numbers in residential lanes       │ match to road centerline +  │
-│    (*"House 14/A,   │ (e.g. Dhanmondi, Banani, Uttara).  │ nearest gate/mor; prompt:   │
-│     Road 5"*)       │                                    │ *"Drag pin to exact gate"*. │
+│    Numbers          │ numbers in residential lanes.      │ match road centerline +     │
+│                     │                                    │ nearest gate; prompt pin.   │
 ├─────────────────────┼────────────────────────────────────┼─────────────────────────────┤
-│ 2. Deep Long-Tail   │ Informal tea stalls, niche local   │ Fall back to neighborhood / │
-│    Venues           │ shops unmapped in base OpenStreet- │ ward centroid (ADM3/ADM4    │
-│    (*"Mama Tea"*)   │ Map without 15-rider vote support. │ boundary) + prompt user.    │
+│ 2. Deep Long-Tail   │ Informal venues unmapped without   │ Neighborhood/ward centroid  │
+│    Venues           │ 15-rider vote support.             │ (admin_boundaries) + prompt.│
 ├─────────────────────┼────────────────────────────────────┼─────────────────────────────┤
-│ 3. Newly Opened     │ Venues opened <30 days ago absent  │ Onboard directly via Ride   │
-│    Businesses       │ from baseline and survey batches.  │ Merchant Portal under       │
-│                     │                                    │ clean-room warranty.        │
+│ 3. Newly Opened     │ Venues <30 days old absent from    │ Ride Merchant Portal,       │
+│    Businesses       │ baseline/survey batches.           │ clean-room warranty.        │
 ├─────────────────────┼────────────────────────────────────┼─────────────────────────────┤
-│ 4. Categorical      │ Rider searches "hospital near me", │ Execute spatial PostGIS     │
-│    Proximity        │ "pharmacy", or "ATM".              │ ST_DWithin query filtered   │
-│                     │                                    │ by category in rider H3 r8. │
+│ 4. Categorical      │ "hospital near me", "ATM".         │ PostGIS ST_DWithin by       │
+│    Proximity        │                                    │ category in rider H3 r8.    │
 ├─────────────────────┼────────────────────────────────────┼─────────────────────────────┤
-│ 5. Inter-District   │ Traveler searches inter-district   │ Match against national      │
-│    Destinations     │ destinations (Sylhet, Chittagong,  │ ADM1/ADM2/ADM3 polygons in  │
-│                     │ Cox's Bazar) from Dhaka handset.   │ dpmaps.admin_boundaries.    │
+│ 5. Inter-District   │ Sylhet, Chittagong, Cox's Bazar   │ admin_boundaries ADM1–ADM3  │
+│    Destinations     │ from Dhaka handsets.               │ (ADM3/4 [UNVERIFIED]).      │
 └─────────────────────┴────────────────────────────────────┴─────────────────────────────┘
 ```
 
 ---
 
-## 6. Deliverables & Definition of Done
+## 8. Deliverables & Definition of Done
 
-- [ ] MeiliSearch cluster provisioned and running on 4 vCPU / 8 GB RAM VPS with `dpmaps_places` index configured.
-- [ ] Index settings verified: `_geo` sortable/filterable attributes, ranking rules, and `"disableOnNumbers": true` active.
-- [ ] Ingestion script `workers/meiliSyncWorker.ts` operational; populates ~52,000 initial records from `dpmaps.v_search_feed` in $< 15\text{ seconds}$.
-- [ ] Instant takedown purge handler verified: executing `purgeSuppressedPoiFromSearch` expunges documents from MeiliSearch in $< 1\text{ second}$.
-- [ ] Clean-room vendor wrapper integration verified: `fetchSafeVendorSuggestions` called exclusively; zero vendor SDK imports outside `vendorClientWrapper.ts`.
-- [ ] Response-only invariant enforced: vendor suggestion display text returned exclusively in client HTTP response; zero vendor strings written to logs or databases.
-- [ ] Stage 007 text normalizer integrated: queries pre-processed with Unicode NFC, ZWJ/ZWNJ stripping, and Bengali numeral folding (`০-৯` $\rightarrow$ `0-9`).
-- [ ] Mixed autocomplete orchestrator (`searchOrchestrator.ts`) deployed supporting all 4 modes (`off`, `shadow`, `primary`, `sole`).
-- [ ] Exposure-breaking fusion verified on mobile clients: dpMaps verified landmarks appear in top slots with distinct `"Ride Verified"` green badge.
-- [ ] Search telemetry active: queries recorded in `dpmaps.search_eval_events` (Tier B, 30-day retention).
-- [ ] Query latency benchmark demonstrates sub-15ms p95 response time under 100 concurrent search queries.
-- [ ] **Stage 002 Legal Gate Enforced:** `search_provider_mode` verified to remain locked at `0: off` until written legal counsel clearance on Items 3, 7, 14, 15, 16, and 17.
+- [ ] **Dual physical indexes** `first_party_pois` + `osm_pois` provisioned in separate data directories; automated test asserts zero cross-writes and zero union indexes in all environments (F-008-1).
+- [ ] Source views `dpmaps.v_search_feed_first_party` / `dpmaps.v_search_feed_osm` deployed (Stage 003 Rev 2.4 brief); sync workers populate ~52,000 documents `[ESTIMATE]`.
+- [ ] **Mixed autocomplete from launch** with `Verified Landmark` / `Open Directory` badges; cross-source 30 m dedupe verified on device (F-008-2).
+- [ ] **Zero-hit fallback verified**: in `primary` mode, 1 local hit ⇒ zero vendor calls (instrumented counter test) (F-008-3).
+- [ ] **Session handoff** (`dest_session:*`, 15 min, `GETDEL`) implemented; expiry → rider reselection; zero vendor coordinates in any persistent table (F-008-4).
+- [ ] Popularity ranking + bilingual prefix behavior validated in staging (MeiliSearch Bengali tokenization `[UNVERIFIED]`) (F-008-5).
+- [ ] Telemetry conformant: selection rows in `raw_search_events` (scrubbed, ≤ 80 chars) written at tap time; `search_eval_events` written only by the post-trip evaluator with CHECK-valid `selected_source`; impressions metrics-only (F-008-6).
+- [ ] Digit-lock `"disableOnNumbers": true` active; Stage 007 normalizer integrated (NFC, ZWJ/ZWNJ, `০-৯` folding).
+- [ ] Vendor integration exclusively via `fetchSafeVendorSuggestions`; zero vendor SDK imports outside `vendorClientWrapper.ts`; zero vendor strings in logs/DB.
+- [ ] Index names consistent with Stage 011 purge paths (`first_party_pois` / `osm_pois`).
+- [ ] Latency benchmark executed on real hardware; `[ESTIMATE]` labels replaced with measurements.
+- [ ] **Stage 002 Legal Gate Enforced:** `search_provider_mode` locked at `0: off` until written counsel clearance on Items 3, 7, 14, 15, 16, 17.
+
+---
+
+## 9. Revision Changelog
+
+| Revision | Date | Author / Context | Summary of Major Changes |
+|---|---|---|---|
+| Rev 2.0 | 2026-10-22 | Orchestrator (audited baseline) | MeiliSearch cluster, `v_search_feed` sync, mixed orchestrator, gap matrix, Tier B telemetry. |
+| Rev 2.1 | 2026-10-22 | Lead Planning & Systems Architecture (batch-2 audit) | **Dual-Index Isolation & Contract Repairs:**<br>1. **Physical index isolation (F-008-1):** replaced single `dpmaps_places` index and phantom `v_search_feed` with two physically separate indexes (`first_party_pois`, `osm_pois`) and two source views; RAM-only query-time merge; suppression purges both.<br>2. **Mixed autocomplete from launch (F-008-2):** unified deduplicated list with `Verified Landmark` / `Open Directory` badges; precedence first_party > osm > vendor; 30 m cross-source dedupe.<br>3. **Zero-hit fallback (F-008-3):** `primary` mode calls the vendor strictly when local returns zero results.<br>4. **Session handoff (F-008-4):** `dest_session:<session_token>`, 15-min TTL, atomic `GETDEL`, no persistence (Stage 002/005 namespace reconciliation tracked cross-plan).<br>5. **Ranking (F-008-5):** query-cluster popularity + decayed vote weights (aggregated only), bilingual Bangla/transliteration prefix support.<br>6. **Telemetry conformance (F-008-6):** selection events → `raw_search_events` (scrubbed, CHECK-valid `selected_source`) at tap time; impressions → Prometheus metrics only; eval rows → `search_eval_events` by the post-trip evaluator.<br>7. **Integrity (F-008-7/8):** `[ESTIMATE]`/`[UNVERIFIED]` labels on all figures; index names unified with Stage 011. |

@@ -731,6 +731,98 @@ GRANT SELECT ON dpmaps.segment_speeds_tod, dpmaps.h3_edge_speeds_tod,
   dpmaps.eta_tod_corrections TO dpmaps_analyst;
 ```
 
+### 4.10 Takedown Reports, Challengers & Search Feed Views (Rev 2.4 — batch-2 adoption, additive only)
+
+Consumers: Stage 011 (traveler-qualified takedown reports), Stage 009 (two-cycle challenger tracking, incumbent pointer), Stage 008 (dual physically-isolated search feed views — replaces the phantom `dpmaps.v_search_feed`).
+
+```sql
+-- 0. Operational stub completion: the traveler qualifier (Stage 011) needs rider identity
+--    on orders. The Stage 003 §3.1 stub lists no user_id column; add it additively.
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS user_id VARCHAR(64);
+CREATE INDEX IF NOT EXISTS idx_orders_user_created ON public.orders (user_id, created_at);
+
+-- 1. Traveler-qualified takedown reports (Stage 011)
+CREATE TABLE dpmaps.takedown_reports (
+  id BIGSERIAL PRIMARY KEY,
+  poi_id UUID NOT NULL REFERENCES dpmaps.public_pois(id) ON DELETE CASCADE,
+  reporter_user_id VARCHAR(64) NOT NULL,
+  reporter_trust_score SMALLINT NOT NULL,
+  traveler_qualified BOOLEAN NOT NULL,        -- F-011-2: rode to destination cell in 90 d
+  report_reason VARCHAR(64) NOT NULL,
+  report_details TEXT,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'auto_hidden', 'confirmed', 'rejected')),
+  reported_at TIMESTAMPTZ NOT NULL,           -- NO default: SLA clock start (Stage 003 discipline)
+  adjudicated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_takedown_reports_poi ON dpmaps.takedown_reports (poi_id, reported_at);
+CREATE INDEX idx_takedown_reports_user ON dpmaps.takedown_reports (reporter_user_id, reported_at);
+
+-- 2. Two-cycle challenger tracking (Stage 009 §7)
+CREATE TABLE dpmaps.provisional_challengers (
+  id BIGSERIAL PRIMARY KEY,
+  query_cluster_id VARCHAR(64) NOT NULL,
+  challenger_h3_res10 VARCHAR(15) NOT NULL,
+  challenger_cell_set TEXT[] NOT NULL,        -- anchor + k=1 ring snapshot for the cycle
+  incumbent_poi_id UUID NOT NULL REFERENCES dpmaps.public_pois(id),
+  cycle_1_score NUMERIC(6, 4) NOT NULL,
+  cycle_1_cycle VARCHAR(32) NOT NULL,
+  cycle_2_score NUMERIC(6, 4),
+  cycle_2_cycle VARCHAR(32),
+  status VARCHAR(16) NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'promoted', 'expired')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_provisional_challengers_lookup
+  ON dpmaps.provisional_challengers (query_cluster_id, challenger_h3_res10, status);
+
+-- 3. Incumbent association for query clusters (Stage 009 §9)
+ALTER TABLE dpmaps.query_clusters
+  ADD COLUMN published_poi_id UUID REFERENCES dpmaps.public_pois(id);
+
+-- 4. Dual search feed views (Stage 008 §3) — replaces the phantom dpmaps.v_search_feed
+CREATE OR REPLACE VIEW dpmaps.v_search_feed_first_party AS
+SELECT
+  'pub_' || p.id::text AS id,
+  p.canonical_name, p.bangla_name, p.category, p.point_type,
+  p.h3_res9, p.h3_res10,
+  ST_Y(p.geom) AS lat, ST_X(p.geom) AS lng,
+  COALESCE(a.aliases, '{}') AS search_aliases,
+  COALESCE(ph.phonetic_keys, '{}') AS bengali_phonetic_keys,
+  p.confidence_score, p.lifecycle_status
+FROM dpmaps.public_pois p
+LEFT JOIN LATERAL (
+  SELECT array_agg(alias_text) AS aliases
+  FROM dpmaps.poi_aliases al WHERE al.poi_id = p.id AND al.status = 'active'
+) a ON TRUE
+LEFT JOIN LATERAL (  -- aggregated: a plain JOIN on published_poi_id would multiply rows
+  SELECT array_agg(DISTINCT qc.bengali_phonetic_key)
+         FILTER (WHERE qc.bengali_phonetic_key IS NOT NULL) AS phonetic_keys
+  FROM dpmaps.query_clusters qc WHERE qc.published_poi_id = p.id
+) ph ON TRUE
+WHERE p.lifecycle_status = 'active';  -- INVARIANT: exactly one row per POI (sync dedupe)
+
+CREATE OR REPLACE VIEW dpmaps.v_search_feed_osm AS
+SELECT
+  'osm_' || o.osm_type || ':' || o.osm_id::text AS id,
+  o.name AS canonical_name, o.name_bn AS bangla_name, o.category, 'dropoff_point' AS point_type,
+  o.h3_res9, o.h3_res10,
+  ST_Y(o.geom) AS lat, ST_X(o.geom) AS lng,
+  '{}'::text[] AS search_aliases,
+  NULL::text[] AS bengali_phonetic_keys,
+  0.0000 AS confidence_score,
+  'active' AS lifecycle_status
+FROM dpmaps.osm_pois o
+WHERE o.is_deleted = FALSE;
+
+-- Grants (staged roles)
+GRANT SELECT, INSERT, UPDATE ON dpmaps.takedown_reports, dpmaps.provisional_challengers TO dpmaps_admin;
+GRANT SELECT ON dpmaps.takedown_reports, dpmaps.provisional_challengers TO dpmaps_analyst;
+GRANT SELECT ON dpmaps.v_search_feed_first_party, dpmaps.v_search_feed_osm TO dpmaps_worker;
+```
+
 ---
 
 ## 5. 135-Day Window Key Schedule & Deduplication Architecture
@@ -1026,6 +1118,7 @@ Stage 003 mandates the following automated test verifications prior to Phase 1 d
 | Rev 2.1 | 2026-10-22 | Orchestrator (per Scratchpad Audit Verification) | **Strict Clean-Room, Ingestion Privileges & 135-Day Rotation Upgrades:**<br>1. **Clean-Room Evaluation Compliance (§4.7):** Dropped `vendor_duration_s` and `vendor_distance_m` from `dpmaps.routing_eval_events`; added `vendor_duration_error_pct` and `vendor_distance_error_pct`. Added missing Gate 1 & 2 fields to `search_eval_events` (`search_success`, `exit_distance_delta_m`, `vendor_suggestion_selected`, `query_cluster_id`) and routing fields (`vehicle_type`, `tod_bucket`, `corridor_overlap_pct`, `route_deviation_flag`). Added CHECK constraint enforcing `selected_place_id IS NULL` for vendor selections.<br>2. **Granular RBAC & Ingestion Privileges (§3.1):** Removed blanket permissions for `dpmaps_worker`. Granted explicit per-table privileges; enforced append-only immutability (`REVOKE UPDATE, DELETE`) on `provenance_events`, `releases`, `poi_versions`, `release_pois`, and `ledger_invalidations`. Granted `ride_dispatch` sequence `USAGE` and `SELECT` on ledger tables for `RETURNING` clauses and vote-cap checks.<br>3. **Retention & pg_partman 5.x Alignment (§4.4, §6.4):** Fixed `pg_partman 5.x` syntax (`part_config.retention = '90 days'`, `part_config.retention_keep_table = false`). Aligned partition drop and daily boundary delete strictly to `< NOW() - INTERVAL '90 days'` across **both** `trip_evidence_ledger` and `ledger_pseudonyms`.<br>4. **135-Day Window Key Schedule with Operational Slack (§5.2):** Expanded key lifetime from 120 days to 135 days (rotated every 30 days), providing 15 days of jitter slack to eliminate missing-key exceptions. Added formal **Cold-Start Launch Mode** ($t < 90\text{ days}$) using `wk-launch-01`.<br>5. **Provider-Agnostic KMS & Resilience (§5.3):** Defined provider-neutral interface `IKeyManagementProvider` supporting AWS KMS and HashiCorp Vault. Added dead-letter queuing on KMS failure; documented right-to-erasure lifecycle and provider scheduled deletion waiting period.<br>6. **Canonical Aggregation View & Kish Weights (§6.3):** Created `dpmaps.v_active_cluster_evidence` view encapsulating key filtering, fraud invalidation exclusion (`dpmaps.ledger_invalidations`), and calculation of $\sum w$ and $\sum w^2$ for Kish effective sample size $n_{\text{eff}}$. Removed restrictive `HAVING >= 15` from underlying aggregation to preserve runner-up cells for margin gate calculation.<br>7. **POI Schema Refinements (§4.2, §4.3, §4.5, §4.6):** Expanded category CHECK to 37 values matching Concept Paper §13.1 and `AGENTS.md` §7. Added `dpmaps.release_pois` membership table; added `ruleset_hash` and `gate_config_snapshot` to `releases`; added `superseded_by` to `public_pois`; added snapshot date to `osm_pois`; removed cascade delete from `admin_boundaries` and documented crude ADM0 coastline clipping prohibition; updated emergency suppression dual-tier SLA (<1hr automated, <4hr review). |
 | Rev 2.2 | 2026-10-22 | Orchestrator (per Postgres 16 Audit Verification) | **Strict DDL Verification, Aggregation Overcounting Fix & Category Canonicalization:**<br>1. **View 5× Overcounting Elimination (§4.1, §6.3):** Added `dpmaps.active_dedup_key` single-row table containing the active 90-day oldest qualifying key. Joined `dpmaps.v_active_cluster_evidence` on `lp.key_id = adk.key_id`, eliminating 5× weight and vote inflation caused by multi-key pseudonym fan-out.<br>2. **Procedure Call & Retention Syntax (§6.4):** Corrected `SELECT partman.run_maintenance_proc()` to procedure call `CALL partman.run_maintenance_proc()` (mandatory in `pg_partman 5.x`). Added 90-day retention prune for `dpmaps.ledger_invalidations`. Added materialized view `dpmaps.mv_cluster_evidence_stats`.<br>3. **Category Canonicalization (§4.2):** Consolidated POI categories from 37 into 26 disjoint canonical categories (e.g. `fuel`, `airport`, `worship`; removing overlapping synonyms `food`, `station`, `mall`). Added `dpmaps.category_synonym_mappings` lookup table.<br>4. **Index Immutability Fix (§4.5):** Dropped mutable `NOW()` function from `idx_suppressions_active` predicate (`CREATE INDEX idx_suppressions_active ON dpmaps.suppressions (applied_at, expires_at)`). Removed `DEFAULT NOW()` from `reported_at` to enable true SLA duration measurement.<br>5. **Ledger Idempotency & Ingestion Timestamp (§4.4):** Enforced deterministic trip completion time (`created_at TIMESTAMPTZ NOT NULL` without `DEFAULT NOW()`), key-independent `trip_hash` token (`HMAC-SHA256(trip_id, IngestionSalt)`), and unique constraint `CONSTRAINT uq_ledger_trip UNIQUE (trip_hash, created_at)` for `ON CONFLICT DO NOTHING` idempotency.<br>6. **Migration Execution Sequence (§3.1):** Documented 4-phase execution sequence and added operational table prerequisite stubs (`public.orders`, `public.ride_receipts`, `public.ride_vendor_data`) for standalone deployment.<br>7. **Foreign Key Immutability (§4.3) & Composite OSM PK (§4.8):** Enforced `ON DELETE RESTRICT` on `poi_versions` and `release_pois`. Changed `osm_pois` primary key to composite `(osm_type, osm_id, snapshot_date)`. Fixed `admin_boundaries` defaults and `chk_search_eval_vendor_null`. |
 | Rev 2.3 | 2026-10-22 | Lead Planning & Systems Architecture (audit 004-005; X-2 adoption) | **TOD Speed Pipeline & Vendor Provenance Schema (additive only):**<br>1. Added `dpmaps.segment_speeds_tod`, `dpmaps.h3_edge_speeds_tod`, `dpmaps.eta_tod_corrections` (§4.9): first-party TOD speed aggregates and learned ETA correction factors consumed by Stage 004 §6; keyed by ODbL-derived OSM node identifiers / H3 cells; no vendor data.<br>2. Added `vendor_provider` to `public.ride_vendor_data` (§4.8): operational provenance enum (`barikoi`/`google`) enabling the Gate 1 Barikoi-only vendor-parity statistic (concept paper §14.3).<br>3. Grants: `dpmaps_worker` read/write on the three §4.9 tables; `dpmaps_analyst` read. Existing Rev 2.2 constraints, views, and retention rules unchanged. |
+| Rev 2.4 | 2026-10-22 | Lead Planning & Systems Architecture (batch-2 audit; X-1 adoption) | **Takedown, Challenger & Search-Feed Objects (additive only):** 0. `public.orders.user_id` stub completion (traveler-qualifier rider key). 1. `dpmaps.takedown_reports` (traveler-qualified reporting, SLA timestamps without defaults). 2. `dpmaps.provisional_challengers` (two-cycle challenger tracking with k=1 cell-set snapshot). 3. `query_clusters.published_poi_id` incumbent pointer. 4. `v_search_feed_first_party` / `v_search_feed_osm` views feeding the physically isolated MeiliSearch indexes (Stage 008); first-party view aggregates phonetic keys per POI — exactly one row per POI by invariant. Grants staged. Rev 2.2/2.3 content unchanged. |
 
 
 

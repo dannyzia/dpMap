@@ -128,18 +128,21 @@ The admin decides when to switch. Month 3 to 4 is a target, not a rule. Gates ar
 | 000 TOC | Done | |
 | 001 Phase 0 seeding and data assets | partiallydone | Rev 2.2 applied per owner. Rev 2.1 verified by running the ingestion script on the real file (49,881 rows). |
 | 002 Provenance firewall and legal | NotDone | Rev 2.1 verified. Rev 2.2 patch (fuzz-test scoping, egress logging, hash coverage, phone regex, `GETDEL`, receipts, quarantine, legal gate) applied per owner, not re-read. |
-| 003 Storage schema and evidence ledger | NotDone | Rev 2.3 applied per Stage 004/005 audit adoption (additive: segment_speeds_tod, h3_edge_speeds_tod, eta_tod_corrections in §4.9; vendor_provider in ride_vendor_data; Rev 2.2 core verified). |
+| 003 Storage schema and evidence ledger | NotDone | Rev 2.4 applied per Stage 004/005 and 008/009/011 audit adoptions (additive: segment_speeds_tod, h3_edge_speeds_tod, eta_tod_corrections in §4.9; vendor_provider in ride_vendor_data in §4.8; takedown_reports, provisional_challengers, query_clusters.published_poi_id, dual search feed views, orders.user_id in §4.10; Rev 2.2 core verified). |
 | 004 OSRM routing engine and dynamic traffic | NotDone | Rev 2.1 applied per audit (TOD-learned speed pipeline with segment_speeds_tod, multiplicative correction k(v,b), per-edge map-matching, 300ms timeout, relative ETA cutover gates ≤ 12% median / ≤ 25% p95, car/bike/cng profiles). |
 | 005 Dispatch router and shadow benchmarking | NotDone | Rev 2.1 applied per audit (first-class mode 0 off, clean-room Redis shadow payload without vendor quotes, correlation via trip_hash, Stage 003 §4.7 DDL alignment, 18 km/h Haversine fix, Gate 1 median & vendor-parity repair). |
-| 008, 009, 011 | NotDone | First pass only (see below). |
-| 006, 007, 010, 012 to 016 | NotDone | Not yet reviewed. |
+| 008 MeiliSearch engine and mixed autocomplete | NotDone | Rev 2.1 applied per audit (dual physical indexes first_party_pois/osm_pois with RAM-only merge, zero-hit vendor fallback, dest_session:* 15-min GETDEL handoff, popularity/bilingual ranking, selection-time telemetry). |
+| 009 Winner selection and Wilson confidence | NotDone | Rev 2.1 applied per audit (UUIDv4 identity, Gate 5 cell margin on v_active_cluster_evidence, proved Wilson threshold n_eff ≥ 25 at p=0.70 [rejecting work order's false ≥ 23 claim; DPM-D-012], k=1 ring aggregation, two-cycle demote-not-delete). |
+| 011 Privacy architecture and takedowns | NotDone | Rev 2.1 applied per audit (Redis Set/sliding-window suppression [no Bloom filter], traveler-qualified reporting [completed ride to cell in 90 d], dual-tier SLA <1h/<4h on Stage 003 columns, categorical residential privacy boundary). |
+| 006, 007, 010, 012 to 016 | NotDone | Not yet reviewed (Batch 3: 006, 007, 010 next). |
 
-**Stage 003 status:** Rev 2.3 applied (Rev 2.2 core verified; Rev 2.3 additively adopts Stage 004/005 consumers: `segment_speeds_tod`, `h3_edge_speeds_tod`, `eta_tod_corrections`, and `vendor_provider` on `ride_vendor_data`). Ready for implementation.
+**Stage 003 status:** Rev 2.4 applied (Rev 2.2 core verified; Rev 2.3/2.4 additively adopt Stages 004/005 and 008/009/011 objects). Ready for implementation.
 
-**First-pass findings in other stages:**
-- 008: primary search should call the vendor only on zero local hits, not fewer than 3; two separate indexes (first-party and OSM) merged at query time; mixed autocomplete from launch.
-- 009: place IDs derived from name and cell (conflicts with Stage 003 random UUIDs); gate 5 (margin) can never bind when gate 4 (70% share) is met; the Wilson gate effectively needs about 23 effective votes at 70% share.
-- 011: "Bloom filter" is really a Redis set (rename); three aged accounts can auto-hide any place, so require reporters to have traveled there; dual-tier takedown SLA (<1hr auto / <4hr review).
+**Open audit findings in pending stages:**
+- 006: verify Planetiler RAM/disk sizing, PMTiles hosting on R2, Noto Sans Bengali glyph pipeline.
+- 007: Unicode normalization, Bengali digit folding, hard digit/direction locking, phonetic key generation for Meili search feed.
+- 010: 4-tier naming authority hierarchy, canonical name synthesis from Stage 007 queries, post-trip UI verification.
+
 
 ---
 

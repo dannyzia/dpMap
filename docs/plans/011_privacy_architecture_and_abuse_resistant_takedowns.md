@@ -1,374 +1,255 @@
 # Stage 011: Privacy Architecture & Abuse-Resistant Takedowns Implementation Plan
 
-**Plan Identifier:** RIDE-dpMaps-PLAN-011  
-**Stage:** 11 of 16 (Privacy Protection & Abuse-Resistant Takedowns)  
-**Parent Document:** [`independent-mapping-engine-concept-paper.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/independent-mapping-engine-concept-paper.md) (§8.3, §10, §10.1–10.4)  
-**TOC Link:** [`000_TOC.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/000_TOC.md)  
-**Current Status:** **Revision 2.0 (Audited & Upgraded)**  
-**Target Phase:** Phase 1 (Dual-Connected Launch & Operational Privacy)  
-**Primary Dependencies:** [`002_provenance_firewall_and_legal_compliance.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/002_provenance_firewall_and_legal_compliance.md), [`003_storage_schema_and_continuous_evidence_ledger.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/003_storage_schema_and_continuous_evidence_ledger.md), [`008_search_engine_meilisearch_and_mixed_autocomplete.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/008_search_engine_meilisearch_and_mixed_autocomplete.md), [`009_winner_selection_and_statistical_confidence.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/009_winner_selection_and_statistical_confidence.md), [`010_naming_engine_and_post_trip_verification.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/010_naming_engine_and_post_trip_verification.md)
+**Plan Identifier:** RIDE-dpMaps-PLAN-011 (Revision 2.1 — Redis-Set Suppression, Traveler-Qualified Reporting & Dual-Tier SLA)
+**Stage:** 11 of 16 (Privacy Protection & Abuse-Resistant Takedowns)
+**Parent Document:** [`independent-mapping-engine-concept-paper.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/independent-mapping-engine-concept-paper.md) (§8.3, §10, §10.1–10.4, §12)
+**TOC Link:** [`000_TOC.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/000_TOC.md)
+**Current Status:** **NotDone**
+**Target Phase:** Phase 1 (Dual-Connected Launch & Operational Privacy)
+**Primary Dependencies:** Stage 002, Stage 003 (Rev 2.3 schema of record), Stage 008 (dual indexes), Stage 009, Stage 010
 
 ---
 
 ## 1. Executive Summary & Objective
 
-Geospatial privacy models designed for Western cities assume strict, numbered hierarchical street grids (e.g. *"123 Main Street, Apt 4B"*), classifying all residential structures as private personal data. In Bangladesh, particularly within metropolitan Dhaka, Chittagong, and Sylhet, street numbering is frequently fragmented, duplicative, or non-existent. Instead, **named buildings** (*"Baitul Aman"*, *"Swapno Neer"*, *"Khan Mansion"*, *"Rashid Bhaban"*, *"Rahman Heritage"*) serve as the foundational navigational landmarks for neighborhood residents, rickshaw pullers, delivery couriers, and emergency responders.
+Western privacy models assume numbered street grids and classify all residential structures as private. In Bangladesh, **named buildings** (*"Baitul Aman"*, *"Khan Mansion"*, *"Rashid Bhaban"*) are the foundational navigational anchors for residents, rickshaw pullers, couriers, and emergency responders. Two failure modes must both be avoided: over-suppression strips residential navigation (the share of urban anchors affected is `[ESTIMATE/UNVERIFIED — the "40%" figure is not established]`); under-suppression leaks apartment numbers, personal relationship names, and phone numbers into public autocomplete.
 
-A naive mapping system creates two fatal failure modes:
-1. **Over-Suppression:** Treating all named residential buildings as private personal data strips 40% of urban navigational anchors, crippling dispatch accuracy in dense residential sectors.
-2. **Under-Suppression:** Indexing every user search string without privacy boundaries exposes private apartment numbers, personal relationship names (*"Mamur bari"*), and telephone numbers to public autocomplete.
+Stage 011 delivers:
+1. **The Public Landmark Convergence Rule (F-011-4):** named houses/buildings may become public landmarks when the **name converges across many unrelated riders**; unit/flat numbers, resident names, and personal Home/Work labels are **permanently barred** — categorical invariants, not regex suggestions.
+2. **Redis Set / Sliding-Window Suppression (F-011-1):** active suppressions live in a Redis Set with TTL semantics and in `dpmaps.suppressions` — **not a Bloom filter** (a Bloom filter cannot expire or delete elements without a full rebuild).
+3. **Traveler-Qualified, Sybil-Resistant Reporting (F-011-2):** reports count toward automated suppression **only from riders who completed a ride to the destination H3 cell within the last 90 days**. Searches are not trips; bots cannot qualify.
+4. **Dual-Tier Takedown SLA (F-011-3):** Tier 1 automated emergency suppression **< 1 hour** SLA (engineering target < 60 s `[ESTIMATE]`); Tier 2 manual review **< 4 hours** — both measured on Stage 003's SLA columns (`reported_at` → `applied_at` / `adjudicated_at`).
+5. **Absolute Privacy Guardrails:** four banned data classes with hard architectural enforcement.
 
-Stage 011 establishes a sovereign, culturally attuned **Privacy Protection & Content Moderation Engine**:
-1. **The Public Landmark Convergence Rule:** Formally defines the mathematical boundary where a private building transitions into a public navigational landmark.
-2. **Absolute Privacy Guardrails (Banned Data):** Enforces hard architectural barriers preventing apartment unit numbers, personal names, phone numbers, and private user bookmarks from entering public indices.
-3. **Abuse-Resistant Takedown Protocol:** Prevents competitor sabotage (e.g., rival restaurants or competing businesses maliciously suppressing each other) using multi-factor reporter trust scoring.
-4. **Sub-Hour Emergency Suppression Layer (<1 hr SLA, <60s Actual):** Orchestrates immediate multi-tier eviction across Redis Bloom filters, MeiliSearch in-memory indices, PostGIS databases, and CDN edge tile caches.
-5. **Human Moderation Workflow with <4 Hour Review SLA:** Escalates auto-hidden locations to a priority moderation queue with audit trail logging and one-step rollback.
+> [!CAUTION]
+> Privacy claims in this plan **reduce exposure** and are **subject to audit**; nothing here is "immune" or "100% compliant". All legal matters route to counsel (Stage 002 Legal Gate).
 
 ---
 
-## 2. The Cultural Reality & Public Landmark Convergence Rule
+## 2. Cultural Reality & the Public Landmark Convergence Rule (F-011-4)
 
 ```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                        PUBLIC LANDMARK CONVERGENCE RULE                                │
-├────────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                        │
-│   [ Raw Rider Traffic: "Baitul Aman" ]                                                 │
-│                     │                                                                  │
-│                     ▼                                                                  │
-│   ┌──────────────────────────────────────────────────────────────┐                     │
-│   │ Convergence Criteria (Evaluated over 90-Day Evidence Window) │                     │
-│   ├──────────────────────────────────────────────────────────────┤                     │
-│   │ 1. Unique Rider Diversity: >= 15 independent pseudonyms     │                     │
-│   │ 2. Driver Account Diversity: >= 5 distinct drivers           │                     │
-│   │ 3. Temporal Distribution: >= 3 separate calendar weeks       │                     │
-│   │ 4. Spatial Entrance Convergence: <= 30m DBSCAN cluster       │                     │
-│   │ 5. Privacy Filter: Clean of flat numbers, phone digits & PII │                     │
-│   └──────────────────────────────────────────────────────────────┘                     │
-│                     │                                                                  │
-│         ┌───────────┴───────────┐                                                      │
-│         ▼ (All 5 Passed)        ▼ (Any Criteria Failed)                                │
-│   ┌───────────────────┐   ┌──────────────────────────────────┐                         │
-│   │ Permitted into    │   │ Classified as Private Residence  │                         │
-│   │ public_pois as a  │   │ • Excluded from public search    │                         │
-│   │ Public Landmark   │   │ • Retained only in private user  │                         │
-│   │ (point_type:      │   │   personal history/bookmarks     │                         │
-│   │  'building')      │   │ • Zero leakage to other riders   │                         │
-│   └───────────────────┘   └──────────────────────────────────┘                         │
-│                                                                                        │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+[ Raw rider traffic: "Baitul Aman" ]  (90-day evidence window)
+        │
+        ▼
+ Convergence criteria (all five):
+   1. >= 15 independent rider pseudonyms
+   2. >= 5 distinct drivers
+   3. >= 3 separate calendar weeks
+   4. Spatial entrance convergence: <= 30 m DBSCAN cluster
+   5. Privacy filter: clean of unit numbers, phone digits, personal names
+        │
+   ┌────┴─────────────────────────────┐
+   ▼ All passed                       ▼ Any failed
+ PUBLIC LANDMARK                  PRIVATE RESIDENCE
+ • publishable as point_type      • excluded from public search
+   'building' via Stage 010       • retained only in the rider's own
+   naming hierarchy                 private history/bookmarks
+ • footprint + gate coords only   • zero leakage to other riders
 ```
 
-### 2.1 The Residential Anonymity Floor
-1. **Single-Family Homes & Low-Density Dwellings:** If a building is visited exclusively by its residents, household members, or a single delivery service, it fails the 15-rider diversity threshold and remains strictly unindexed.
-2. **Multi-Tenant Residential Complexes & Major Mansions:** When a named residential building attracts broad public traffic ($\ge 15$ diverse riders across $\ge 3$ weeks), it functions de facto as a civic navigational anchor. Publishing the building's physical footprint and gate coordinates aids urban mobility without violating personal privacy, provided no resident names or unit specifics are attached.
-3. **Dead-End Cul-de-Sac K-Anonymity:** In low-density residential lanes where fewer than 5 unique riders travel in a 90-day window, drop-off coordinates are snapped to the nearest major road junction rather than publishing a private dead-end curb pin.
+### 2.1 The Residential Boundary — categorical rules
+1. **Named houses/buildings (convergence):** when the **name** is independently used by ≥ 15 unrelated riders across ≥ 3 weeks, the building functions as a civic navigational anchor. Publishing its footprint and gate coordinates aids mobility **without** any resident identification.
+2. **Permanently barred from publication (never, under any convergence):** unit/flat/floor numbers, suite designations, resident or family names, relationship phrases (*"Mamur bari"*), and personal category labels (*Home, Work, Gym, Parents*). These are hard-pipeline invariants (§3), not heuristics.
+3. **Single-family homes** (traffic from residents/household only) fail rider diversity and stay unindexed.
+4. **Low-density lanes (k-anonymity floor):** < 5 unique riders in 90 days ⇒ snap to the nearest major road junction; never publish a private dead-end curb pin.
 
 ---
 
 ## 3. Absolute Privacy Guardrails (Banned Data Invariants)
 
-Under no circumstance will the dpMaps pipeline publish, index, or expose any of the following four data classes:
-
-### 3.1 Class 1: Unit-Level Specifics & Internal Living Quarters
-- **Banned Strings:** Apartment numbers, flats, suites, or floor designations (*"Flat 4B"*, *"Apt 12"*, *"Suite 301"*, *"৪র্থ তলা"*, *"৩য় তলা"*).
-- **Enforcement:** Detected by regex patterns in `namingSanitizer.ts`. Strip unit specifics for commercial buildings; if the entire query is an apartment identifier, drop from public ingestion completely.
-
-### 3.2 Class 2: Personal Relationship & Private Occupant Names
-- **Banned Strings:** Queries combining a personal first name or family relationship with residential markers (*"Rahim er basha"*, *"Mamur bari"*, *"Khalamonir flat"*, *"Uncle's residence"*, *"Dr. Kamal er bari"*).
-- **Enforcement:** Linguistic parser identifies familial suffixes (*"er basha"*, *"er bari"*) combined with proper personal nouns and routes the query exclusively to user private search history.
-
-### 3.3 Class 3: User Personal Saved Places & Profile Bookmarks
-- **Banned Strings:** Private category labels assigned by users (*"Home"*, *"Work"*, *"Gym"*, *"Parents"*, *"Girlfriend"*).
-- **Enforcement:** Stored in `public.user_private_places` (Stage 014), encrypted with per-user salt. These records are strictly isolated from `dpmaps.trip_evidence_ledger` and never enter the public learning pool.
-
-### 3.4 Class 4: Reverse Passenger-to-Location Linkage
-- **Banned Capability:** No API endpoint, database view, or administrative tool may permit querying "which riders visited Place X" or "which places were visited by Rider Y".
-- **Enforcement:** All trip evidence in `dpmaps.trip_evidence_ledger` is stripped of `order_id` and raw `user_id`. Linkage relies on ephemeral, rotating 120-day HMAC pseudonyms in `dpmaps.ledger_pseudonyms` that are cryptographically shredded after 97 days.
+| Class | Banned content | Enforcement |
+|---|---|---|
+| **1. Unit-level specifics** | *"Flat 4B"*, *"Apt 12"*, *"Suite 301"*, *"৪র্থ তলা"* | Regex + token rules in `namingSanitizer.ts`; entire unit-only queries dropped from public ingestion |
+| **2. Personal/relationship names** | *"Rahim er basha"*, *"Mamur bari"*, *"Dr. Kamal er bari"* | Linguistic parser: familial suffixes + personal nouns → private history only |
+| **3. Saved personal places** | *Home, Work, Gym, Parents* | `user_private_places` (Stage 014), per-user encrypted; never in the learning pool |
+| **4. Rider↔place linkage** | any "who visited X" query capability | Evidence stores `trip_hash = HMAC-SHA256(trip_id, IngestionSalt)` only (key-independent, Stage 003 §4.4). **135-day** window keys (`ledger_pseudonyms`, rotated every 30 days), 90-day ledger retention, 30-day raw purge. No endpoint joins riders to places. |
 
 ---
 
-## 4. Abuse-Resistant Auto-Hide & Takedown Protocol
+## 4. Abuse-Resistant Reporting & Traveler-Qualified Auto-Hide (F-011-2)
 
-Allowing anonymous, single-click location takedowns opens the mapping engine to severe **commercial sabotage** (e.g., competing restaurants, rival shopping centers, or hostile actors systematically taking down rival storefronts to divert ride traffic).
-
-Stage 011 implements a **Multi-Factor Reporter Trust Score** that balances swift privacy protection against coordinated vandalism:
+Anonymous single-click takedowns enable commercial sabotage (rival restaurants hiding each other). Reporting is gated by a trust score **and** a hard traveler qualifier:
 
 ```
-[ User Files Location Takedown / Privacy Report ]
-                      │
-                      ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                   MULTI-FACTOR REPORTER TRUST EVALUATION                               │
-├────────────────────────────────────────────────────────────────────────────────────────┤
-│ 1. Phone Verification Check: Account must have verified +880 mobile number             │
-│ 2. Account Longevity Check: Account age >= 30 days                                      │
-│ 3. Platform History Check: Account has >= 5 completed rides                            │
-│ 4. Proximity / Context Check: Reporter has visited or searched within 500m of POI     │
-│ 5. Reputation History: Reporter has zero history of fraudulent/abusive reports         │
-│ 6. Global Velocity Rate Limit: Max 1 report per user per 24 hours across platform      │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-                      │
-        ┌─────────────┴─────────────┐
-        ▼ (Trust Score >= 70)       ▼ (Trust Score < 70 / Unverified)
-┌───────────────────────────────┐ ┌──────────────────────────────────────────────┐
-│ High-Trust Verified Report    │ │ Low-Trust / Unverified Report                │
-│ • Increments Redis auto-hide  │ │ • Logged into Standard Moderation Queue      │
-│   counter for place_id        │ │ • Does NOT increment auto-hide counter       │
-│ • Key TTL: 24 hours           │ │ • Reviewed by human moderator within 24h     │
-└───────────────────────────────┘ └──────────────────────────────────────────────┘
+[ User files takedown / privacy report ]
         │
         ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ AUTO-HIDE THRESHOLD EVALUATION:                                                        │
-│ If Reports >= 3 distinct high-trust verified accounts within 24 hours:                 │
-│   1. AUTO-HIDE TRIGGERED IMMEDIATELY across all search endpoints (<60s)               │
-│   2. Added to Redis Emergency Suppression Set                                          │
-│   3. Removed from MeiliSearch active index                                             │
-│   4. Escalated to Priority Moderation Queue with <4-Hour Human Review SLA             │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+ HARD QUALIFIER (before any auto-hide counting):
+   "Qualified traveler" = the reporter COMPLETED A RIDE whose drop-off fell in
+   the POI's H3 res-10 cell (or its k=1 ring) within the last 90 days.
+   Verified against first-party orders (operational domain; boolean result only).
+   A search near the POI does NOT qualify. Unqualified reports are queued for
+   humans but can NEVER trigger automated suppression (bot/sybil defense).
+        │
+        ▼
+ MULTI-FACTOR TRUST SCORE (points all [ESTIMATE]):
+   phone verified +880 (mandatory prerequisite)      +30
+   account age >= 90 d (+25) / >= 30 d (+15)         0..+25
+   completed trips >= 20 (+25) / >= 5 (+15)          0..+25
+   contextual proximity (searched or rode nearby)    +20
+   abuse penalty (per prior rejected/fraud report)   -50
+   rate limit: 1 report per user per 24 h (sliding-window counter)
+        │
+   ┌────┴───────────────┐
+   ▼ score >= 70        ▼ score < 70
+ HIGH-TRUST             QUEUED (no counter increment)
+ + qualified traveler?
+   │ yes → increment auto-hide SET for place (distinct reporters)
+   │ no  → queue only
+        ▼
+ AUTO-HIDE THRESHOLD: >= 3 DISTINCT qualified travelers within 24 h
+   → Tier 1 emergency suppression (§5), < 1 h SLA (target < 60 s)
+   → priority moderation ticket, Tier 2 < 4 h SLA
 ```
 
-### 4.1 Reporter Trust Score Matrix
-$$\text{Score} = S_{\text{phone}} + S_{\text{age}} + S_{\text{rides}} + S_{\text{proximity}} - S_{\text{abuse\_penalty}}$$
-
-| Factor | Condition | Points |
-|---|---|:---:|
-| **Phone Verification** | Active +880 mobile OTP verified | **+30** (Mandatory prerequisite) |
-| **Account Age** | $\ge 90\text{ days}$ (+25) \| $\ge 30\text{ days}$ (+15) \| $< 30\text{ days}$ (0) | **0 to +25** |
-| **Completed Trips** | $\ge 20\text{ trips}$ (+25) \| $\ge 5\text{ trips}$ (+15) \| $< 5\text{ trips}$ (0) | **0 to +25** |
-| **Spatial Proximity** | Completed ride to or searched within 500m of POI | **+20** |
-| **Abuse Penalty** | Prior rejected/fraudulent takedown report | **-50** per prior strike |
-
-- **High-Trust Threshold:** $\text{Score} \ge 70 \rightarrow$ Qualifies to increment the 24-hour Auto-Hide Counter.
-- **Low-Trust Threshold:** $\text{Score} < 70 \rightarrow$ Queued for standard human moderation; cannot trigger automatic suppression.
+### 4.1 Counter Mechanics (F-011-1)
+- Auto-hide counter: Redis **Set** `dpmaps:takedown:place_reports:<place_id>` of qualified reporter IDs; **TTL set once on first add** (86400 s) — a sliding-window distinct-counter, not a Bloom filter. (`EXPIRE` must not reset the window on every add.)
+- Rate limiter: `dpmaps:takedown:user_rate:<user_id>` counter with TTL-on-first-add.
 
 ---
 
-## 5. Sub-Hour Emergency Suppression Layer (<1 hr SLA, <60s Actual)
+## 5. Emergency Suppression & Dual-Tier SLA (F-011-3, F-011-5)
 
-When a location is suppressed—either automatically via the high-trust threshold or manually via admin intervention—the engine executes an immediate, coordinated eviction across all serving layers:
-
-```
-                                [ Takedown Trigger ]
-                       (Auto-Hide Threshold or Admin Action)
-                                         │
-        ┌────────────────────────────────┼────────────────────────────────┐
-        ▼                                ▼                                ▼
-  [ Tier 1: Edge Redis ]      [ Tier 2: Search Index ]       [ Tier 3: Database & Lineage ]
-  • Add to Redis Set:          • MeiliSearch async            • Insert into dpmaps.suppressions
-    dpmaps:suppression:          document deletion:           • Update dpmaps.public_pois:
-    active_place_ids             index.deleteDocument(id)       lifecycle_status = 'suppressed'
-  • Latency: < 5 ms            • Latency: < 100 ms            • Record dpmaps.provenance_events
-        │                                │                                │
-        └────────────────────────────────┼────────────────────────────────┘
-                                         │
-                        ┌────────────────┴────────────────┐
-                        ▼                                 ▼
-              [ Tier 4: CDN Edge ]               [ Tier 5: Routing OSRM ]
-              • Cloudflare API Cache             • Exclude coordinate from
-                Tag Purge:                         entrance snapping barrier
-                cf-cache-tag: tile-z{z}-{x}-{y}    (if entrance gate closed)
-              • Latency: < 30 s                  • Latency: < 60 s
-```
-
-### 5.1 Database Schema Integration (`dpmaps.suppressions`)
-Directly integrates with the Stage 003 relational schema:
+### 5.1 Schema of Record (Stage 003 §4.5 — do not redefine)
 
 ```sql
--- Schema alignment with Stage 003
-CREATE TABLE dpmaps.suppressions (
-  id BIGSERIAL PRIMARY KEY,
-  poi_id UUID REFERENCES dpmaps.public_pois(id) ON DELETE CASCADE,
-  entity_type VARCHAR(32) NOT NULL CHECK (entity_type IN ('poi', 'alias', 'query_cluster', 'h3_cell')),
-  entity_value VARCHAR(255) NOT NULL,
-  reason VARCHAR(64) NOT NULL CHECK (reason IN (
-    'privacy_residential', 'privacy_personal', 'commercial_dispute',
-    'court_order', 'fraud_sabotage', 'profanity_abuse', 'security_sensitive'
-  )),
-  requester_type VARCHAR(32) NOT NULL CHECK (requester_type IN ('auto_hide', 'user_report', 'legal_counsel', 'admin')),
-  notes TEXT,
-  expires_at TIMESTAMPTZ,
-  active BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- Stage 003 Rev 2.3 dpmaps.suppressions (authoritative):
+--   id, target_type IN ('poi_id','osm_poi_id','h3_cell','name_pattern'),
+--   target_value, reason IN ('court_order','privacy_request','security_sensitive',
+--   'copyright_claim','sybil_attack'), is_auto_hidden, auto_hide_reason,
+--   reported_at TIMESTAMPTZ NOT NULL (no default — SLA clock start),
+--   suppression_target_sla VARCHAR(16) NOT NULL DEFAULT '1_hour',
+--   applied_at, adjudicated_at, expires_at, actor_id, audit_note
+-- Indexes: idx_suppressions_target (target_type, target_value),
+--          idx_suppressions_active (applied_at, expires_at) — immutable predicate.
 
-CREATE INDEX idx_suppressions_active ON dpmaps.suppressions (entity_value) WHERE active = TRUE;
-CREATE INDEX idx_suppressions_poi ON dpmaps.suppressions (poi_id);
+-- Active-suppression predicate (no 'active' column exists):
+--   applied_at IS NOT NULL AND (expires_at IS NULL OR expires_at > NOW())
 
--- User takedown report audit table
-CREATE TABLE dpmaps.takedown_reports (
-  id BIGSERIAL PRIMARY KEY,
-  poi_id UUID NOT NULL REFERENCES dpmaps.public_pois(id) ON DELETE CASCADE,
-  reporter_user_id UUID NOT NULL,
-  reporter_trust_score SMALLINT NOT NULL,
-  report_reason VARCHAR(64) NOT NULL,
-  report_details TEXT,
-  status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'auto_hidden', 'confirmed', 'rejected')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- Tier mapping (F-011-3):
+--   Tier 1 automated emergency: suppression_target_sla = '1_hour'
+--     SLA = applied_at - reported_at  < 1 hour (engineering target < 60 s [ESTIMATE])
+--   Tier 2 manual review/takedown:   suppression_target_sla = '4_hours'
+--     SLA = adjudicated_at - reported_at < 4 hours (3 h on-call alert [ESTIMATE])
+```
 
-CREATE INDEX idx_takedown_reports_poi ON dpmaps.takedown_reports (poi_id, created_at);
-CREATE INDEX idx_takedown_reports_user ON dpmaps.takedown_reports (reporter_user_id, created_at);
+`dpmaps.takedown_reports` is added additively via the Stage 003 Rev 2.4 brief (batch-2 audit Part F), with `reported_at TIMESTAMPTZ NOT NULL` (no default — same SLA discipline) and a `traveler_qualified BOOLEAN NOT NULL` column.
+
+### 5.2 Eviction Cascade
+
+```
+[ Takedown trigger (auto-hide threshold or admin) ]
+   ├─ Tier A: Redis Set dpmaps:suppression:active_place_ids  (sAdd; < 5 ms)
+   ├─ Tier B: MeiliSearch eviction — first_party_pois AND osm_pois (Stage 008
+   │          dual indexes; pub_* / osm_* IDs; < 100 ms)
+   ├─ Tier C: dpmaps.suppressions row (Stage 003 columns) + public_pois
+   │          lifecycle_status = 'suppressed' + provenance_events row
+   ├─ Tier D: Cloudflare cache-tag purge for affected tiles (< 30 s [ESTIMATE])
+   └─ Tier E: OSRM entrance-snapping exclusion (< 60 s [ESTIMATE])
 ```
 
 ---
 
-## 6. Implementation: Emergency Suppression & Gatekeeper
+## 6. Implementation (schema-conformant)
 
 ```typescript
 // utils-server/emergencySuppression.ts
 import { Pool } from 'pg';
 import { RedisClientType } from 'redis';
 import { MeiliSearch } from 'meilisearch';
+import { createHash } from 'crypto';
+import { v5 as uuidv5 } from 'uuid';
 import { logger } from './logger';
 
-const REDIS_SUPPRESSION_SET = 'dpmaps:suppression:active_place_ids';
-
-export interface SuppressionParams {
-  poi_id: string;
-  reason: 'privacy_residential' | 'privacy_personal' | 'commercial_dispute' | 'court_order' | 'fraud_sabotage' | 'profanity_abuse' | 'security_sensitive';
-  requester_type: 'auto_hide' | 'user_report' | 'legal_counsel' | 'admin';
-  notes?: string;
-  admin_user_id?: string;
-}
+const REDIS_SUPPRESSION_SET = 'dpmaps:suppression:active_place_ids'; // Redis Set (F-011-1)
+const DPMAPS_SUPPRESSION_NS = process.env.DPMAPS_UUID_NS!; // fixed namespace UUID, provisioned once
 
 export class EmergencySuppressionService {
   constructor(
     private readonly dbPool: Pool,
     private readonly redisClient: RedisClientType,
-    private readonly meiliClient: MeiliSearch,
-    private readonly cloudflareApiToken?: string,
-    private readonly cloudflareZoneId?: string
+    private readonly meiliClient: MeiliSearch
   ) {}
 
-  /**
-   * Fast edge check: returns true if placeId is currently suppressed
-   */
-  async isPlaceSuppressed(placeId: string): Promise<boolean> {
+  async isPlaceSuppressed(targetValue: string): Promise<boolean> {
     try {
-      return await this.redisClient.sIsMember(REDIS_SUPPRESSION_SET, placeId);
+      return await this.redisClient.sIsMember(REDIS_SUPPRESSION_SET, targetValue);
     } catch (err) {
-      logger.error({ err, placeId }, '[Suppression] Redis check failed, failing open to DB');
-      // DB Fallback on Redis failure
+      logger.error({ err }, '[Suppression] Redis check failed; failing over to DB');
       const res = await this.dbPool.query(
-        'SELECT 1 FROM dpmaps.suppressions WHERE poi_id = $1 AND active = TRUE LIMIT 1',
-        [placeId]
-      );
-      return res.rowCount !== null && res.rowCount > 0;
+        `SELECT 1 FROM dpmaps.suppressions
+          WHERE target_value = $1 AND applied_at IS NOT NULL
+            AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1`, [targetValue]);
+      return (res.rowCount ?? 0) > 0;
     }
   }
 
-  /**
-   * Sub-minute emergency suppression across all serving tiers
-   */
-  async executeEmergencySuppression(params: SuppressionParams): Promise<void> {
-    const startTime = Date.now();
-    logger.warn({ params }, '[Suppression] Initiating emergency takedown');
+  async executeEmergencySuppression(params: {
+    target_type: 'poi_id' | 'osm_poi_id' | 'h3_cell' | 'name_pattern';
+    target_value: string;
+    reason: 'court_order' | 'privacy_request' | 'security_sensitive' | 'copyright_claim' | 'sybil_attack';
+    requester: 'auto_hide' | 'user_report' | 'legal_counsel' | 'admin';
+    reported_at: Date;            // SLA clock start (Stage 003 discipline)
+    tier: '1_hour' | '4_hours';
+    actor_id: string;
+    audit_note?: string;
+  }): Promise<void> {
+    // Tier A: Redis Set (< 5 ms)
+    await this.redisClient.sAdd(REDIS_SUPPRESSION_SET, params.target_value);
 
-    // 1. Edge Redis Set Invalidation (< 5 ms)
-    await this.redisClient.sAdd(REDIS_SUPPRESSION_SET, params.poi_id);
-
-    // 2. MeiliSearch Document Eviction (< 100 ms)
-    try {
-      const index = this.meiliClient.index('places');
-      await index.deleteDocument(params.poi_id);
-    } catch (err) {
-      logger.error({ err, poi_id: params.poi_id }, '[Suppression] MeiliSearch eviction error');
+    // Tier B: dual-index MeiliSearch eviction (Stage 008 names)
+    for (const indexName of ['first_party_pois', 'osm_pois'] as const) {
+      try {
+        await this.meiliClient.index(indexName).deleteDocument(params.target_value);
+      } catch (err) { logger.error({ err, indexName }, '[Suppression] eviction error'); }
     }
 
-    // 3. PostgreSQL Database State Update (< 50 ms)
+    // Tier C: Stage 003 conformant writes
     const client = await this.dbPool.connect();
-    let affectedTileCoords: { z: number; x: number; y: number } | null = null;
     try {
       await client.query('BEGIN');
-
-      // Update POI lifecycle status
       await client.query(
-        `UPDATE dpmaps.public_pois 
-         SET lifecycle_status = 'suppressed', updated_at = NOW() 
-         WHERE id = $1`,
-        [params.poi_id]
-      );
+        `INSERT INTO dpmaps.suppressions
+           (target_type, target_value, reason, is_auto_hidden, auto_hide_reason,
+            reported_at, suppression_target_sla, applied_at, actor_id, audit_note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9)`,
+        [params.target_type, params.target_value, params.reason,
+         params.requester === 'auto_hide', params.requester === 'auto_hide' ? 'qualified_traveler_threshold' : null,
+         params.reported_at, params.tier, params.actor_id, params.audit_note ?? null]);
 
-      // Record suppression entry
+      if (params.target_type === 'poi_id') {
+        await client.query(
+          `UPDATE dpmaps.public_pois SET lifecycle_status = 'suppressed', updated_at = NOW()
+            WHERE id = $1`, [params.target_value]);
+      }
+
+      // Provenance: exact Stage 003 §4.5 columns
+      const eventHash = createHash('sha256')
+        .update(`${params.target_value}:${params.reason}:${params.reported_at.toISOString()}`)
+        .digest('hex');
+      // record_id: the POI UUID for poi_id targets; for h3_cell / name_pattern / osm_poi_id
+      // targets a deterministic namespace UUID (UUIDv5 over "type:value") satisfies NOT NULL
+      // without inventing identifiers (refinement: no null-UUID placeholder).
+      const recordId = params.target_type === 'poi_id'
+        ? params.target_value
+        : uuidv5(`${params.target_type}:${params.target_value}`, DPMAPS_SUPPRESSION_NS);
       await client.query(
-        `INSERT INTO dpmaps.suppressions (
-          poi_id, entity_type, entity_value, reason, requester_type, notes, active
-        ) VALUES ($1, 'poi', $1::text, $2, $3, $4, TRUE)`,
-        [params.poi_id, params.reason, params.requester_type, params.notes || null]
-      );
-
-      // Record immutable provenance event
-      await client.query(
-        `INSERT INTO dpmaps.provenance_events (
-          poi_id, event_type, reason, actor_type, actor_id, changes
-        ) VALUES ($1, 'takedown', $2, $3, $4, $5)`,
-        [
-          params.poi_id,
-          params.reason,
-          params.requester_type === 'admin' ? 'admin' : 'system',
-          params.admin_user_id || 'system-auto-hide',
-          JSON.stringify({ suppressed_at: new Date().toISOString() })
-        ]
-      );
-
+        `INSERT INTO dpmaps.provenance_events
+           (event_type, record_id, target_record_hash, reason_code, publication_cycle, actor_id, event_hash)
+         VALUES ('takedown', $1::uuid, $2, $3, $4, $5, $6)`,
+        [recordId, eventHash, params.reason, 'manual', params.actor_id, eventHash]);
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
-      logger.error({ err, params }, '[Suppression] DB transaction failed');
       throw err;
-    } finally {
-      client.release();
-    }
-
-    const elapsedMs = Date.now() - startTime;
-    logger.info({ poi_id: params.poi_id, elapsedMs }, '[Suppression] Emergency suppression completed');
-  }
-
-  /**
-   * Restores a previously suppressed POI (e.g. after moderation review)
-   */
-  async restoreSuppressedPlace(poiId: string, adminUserId: string): Promise<void> {
-    await this.redisClient.sRem(REDIS_SUPPRESSION_SET, poiId);
-
-    await this.dbPool.query(
-      `UPDATE dpmaps.suppressions SET active = FALSE WHERE poi_id = $1`,
-      [poiId]
-    );
-
-    await this.dbPool.query(
-      `UPDATE dpmaps.public_pois 
-       SET lifecycle_status = 'published', updated_at = NOW() 
-       WHERE id = $1`,
-      [poiId]
-    );
-
-    // Re-index into MeiliSearch
-    const poiRes = await this.dbPool.query(
-      'SELECT id, canonical_name, bangla_name, h3_res9, h3_res10, ST_Y(geom) as lat, ST_X(geom) as lng FROM dpmaps.public_pois WHERE id = $1',
-      [poiId]
-    );
-    if (poiRes.rows.length > 0) {
-      const row = poiRes.rows[0];
-      await this.meiliClient.index('places').addDocuments([{
-        id: row.id,
-        name: row.canonical_name,
-        bangla_name: row.bangla_name,
-        _geo: { lat: parseFloat(row.lat), lng: parseFloat(row.lng) }
-      }]);
-    }
-
-    logger.info({ poiId, adminUserId }, '[Suppression] Place successfully restored to production');
+    } finally { client.release(); }
   }
 }
 ```
 
-### 6.2 Reporter Trust Gatekeeper & Auto-Hide Evaluator
-
 ```typescript
-// utils-server/takedownGatekeeper.ts
+// utils-server/takedownGatekeeper.ts (traveler-qualified — F-011-2)
 import { Pool } from 'pg';
 import { RedisClientType } from 'redis';
 import { EmergencySuppressionService } from './emergencySuppression';
@@ -376,13 +257,16 @@ import { logger } from './logger';
 
 export interface ReportSubmission {
   poi_id: string;
+  poi_h3_res10: string;
+  ring_cells: string[];               // k=1 ring snapshot (Stage 009 §4.3)
   reporter_user_id: string;
   phone_verified: boolean;
   account_created_at: Date;
   completed_trips_count: number;
-  has_nearby_trip_or_search: boolean;
+  has_nearby_context: boolean;        // trust bonus only — NOT the qualifier
   prior_abuse_strikes: number;
-  reason: 'privacy_residential' | 'commercial_dispute' | 'profanity_abuse' | 'other';
+  reason: 'privacy_residential' | 'privacy_personal' | 'commercial_dispute'
+        | 'profanity_abuse' | 'security_sensitive' | 'other';
   details?: string;
 }
 
@@ -393,89 +277,82 @@ export class TakedownGatekeeper {
     private readonly suppressionService: EmergencySuppressionService
   ) {}
 
-  /**
-   * Calculates Reporter Trust Score (0 - 100)
-   */
+  /** Reporter Trust Score per the §4 matrix (points all [ESTIMATE]). */
   calculateTrustScore(sub: ReportSubmission): number {
-    // Phone verification is an absolute prerequisite
-    if (!sub.phone_verified) return 0;
-
-    let score = 30; // Base score for verified phone
-
-    // Account longevity
-    const ageDays = (Date.now() - sub.account_created_at.getTime()) / (1000 * 86400);
+    if (!sub.phone_verified) return 0;                    // mandatory prerequisite
+    let score = 30;
+    const ageDays = (Date.now() - sub.account_created_at.getTime()) / 86400000;
     if (ageDays >= 90) score += 25;
     else if (ageDays >= 30) score += 15;
-
-    // Completed trips history
     if (sub.completed_trips_count >= 20) score += 25;
     else if (sub.completed_trips_count >= 5) score += 15;
-
-    // Spatial proximity / local context
-    if (sub.has_nearby_trip_or_search) score += 20;
-
-    // Abuse penalties
+    if (sub.has_nearby_context) score += 20;
     score -= sub.prior_abuse_strikes * 50;
-
     return Math.max(0, Math.min(100, score));
   }
 
-  /**
-   * Processes an incoming takedown report
-   */
+  /** Hard qualifier (F-011-2): completed ride to the POI's H3 res-10 cell (k=1 ring)
+   *  within 90 days. First-party orders in the operational domain; boolean result only.
+   *  Requires public.orders.user_id (Stage 003 Rev 2.4 stub completion). */
+  async isQualifiedTraveler(userId: string, poiH3Res10: string, ringCells: string[]): Promise<boolean> {
+    const res = await this.dbPool.query(
+      `SELECT 1 FROM public.orders o
+        WHERE o.user_id = $1 AND o.status = 'completed'
+          AND o.created_at >= NOW() - INTERVAL '90 days'
+          AND h3_lat_lng_to_cell(o.dropoff_lat, o.dropoff_lng, 10) = ANY($2::text[])
+        LIMIT 1`, [userId, [poiH3Res10, ...ringCells]]);
+    return (res.rowCount ?? 0) > 0;
+    // If no DB H3 extension is provisioned, compute cells application-side (h3-js)
+    // and pass them as an explicit equality list; the result is still a boolean.
+  }
+
   async processTakedownReport(sub: ReportSubmission): Promise<{ status: 'auto_hidden' | 'queued'; trust_score: number }> {
     const trustScore = this.calculateTrustScore(sub);
+    const qualified = await this.isQualifiedTraveler(sub.reporter_user_id, sub.poi_h3_res10, sub.ring_cells);
+    const reportedAt = new Date(); // SLA clock start (no DEFAULT on reported_at)
 
-    // 1. Check user 24h global report rate limit
-    const userRateKey = `dpmaps:takedown:user_rate:${sub.reporter_user_id}`;
-    const userReportCount = await this.redisClient.incr(userRateKey);
-    if (userReportCount === 1) {
-      await this.redisClient.expire(userRateKey, 86400);
-    }
-    if (userReportCount > 1) {
-      logger.warn({ user_id: sub.reporter_user_id }, '[Takedown] User rate limit exceeded');
-      return { status: 'queued', trust_score: 0 };
-    }
+    // Rate limit: 1 report per user per 24 h (TTL-on-first-add sliding window)
+    const rateKey = `dpmaps:takedown:user_rate:${sub.reporter_user_id}`;
+    const count = await this.redisClient.incr(rateKey);
+    if (count === 1) await this.redisClient.expire(rateKey, 86400);
+    const rateLimited = count > 1;
 
-    // 2. Persist report to database audit table
+    // Persist to dpmaps.takedown_reports (Stage 003 Rev 2.4; traveler_qualified recorded)
     await this.dbPool.query(
-      `INSERT INTO dpmaps.takedown_reports (
-        poi_id, reporter_user_id, reporter_trust_score, report_reason, report_details, status
-      ) VALUES ($1, $2, $3, $4, $5, 'pending')`,
-      [sub.poi_id, sub.reporter_user_id, trustScore, sub.reason, sub.details || null]
-    );
+      `INSERT INTO dpmaps.takedown_reports
+         (poi_id, reporter_user_id, reporter_trust_score, traveler_qualified,
+          report_reason, report_details, status, reported_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)`,
+      [sub.poi_id, sub.reporter_user_id, trustScore, qualified,
+       sub.reason, sub.details ?? null, reportedAt]);
 
-    // 3. Low-trust report: queue without incrementing auto-hide counter
-    if (trustScore < 70) {
+    // Unqualified or low-trust or rate-limited: queue only — NEVER auto-hide
+    if (rateLimited || trustScore < 70 || !qualified) {
       return { status: 'queued', trust_score: trustScore };
     }
 
-    // 4. High-trust report: increment Redis place counter
-    const placeCounterKey = `dpmaps:takedown:place_reports:${sub.poi_id}`;
-    const reportCount = await this.redisClient.sAdd(placeCounterKey, sub.reporter_user_id);
-    await this.redisClient.expire(placeCounterKey, 86400);
+    // Distinct qualified-reporter Set (TTL 86400 set ONCE at first add)
+    const key = `dpmaps:takedown:place_reports:${sub.poi_id}`;
+    await this.redisClient.sAdd(key, sub.reporter_user_id);
+    if (await this.redisClient.sCard(key) === 1) await this.redisClient.expire(key, 86400);
 
-    const distinctVerifiedReports = await this.redisClient.sCard(placeCounterKey);
-
-    // 5. Auto-Hide Threshold Check (>= 3 verified reports within 24 hours)
-    if (distinctVerifiedReports >= 3) {
+    if (await this.redisClient.sCard(key) >= 3) {
       await this.suppressionService.executeEmergencySuppression({
-        poi_id: sub.poi_id,
-        reason: sub.reason === 'privacy_residential' ? 'privacy_residential' : 'fraud_sabotage',
-        requester_type: 'auto_hide',
-        notes: `Auto-hidden via ${distinctVerifiedReports} independent verified reports`
+        target_type: 'poi_id',
+        target_value: sub.poi_id,
+        reason: sub.reason === 'privacy_residential' || sub.reason === 'privacy_personal'
+          ? 'privacy_request' : 'security_sensitive',
+        requester: 'auto_hide',
+        reported_at: reportedAt,
+        tier: '1_hour',
+        actor_id: 'system-auto-hide',
+        audit_note: `Auto-hidden via 3 distinct qualified travelers (F-011-2)`
       });
-
       await this.dbPool.query(
-        `UPDATE dpmaps.takedown_reports 
-         SET status = 'auto_hidden' 
-         WHERE poi_id = $1 AND status = 'pending'`,
-        [sub.poi_id]
-      );
-
+        `UPDATE dpmaps.takedown_reports SET status = 'auto_hidden'
+          WHERE poi_id = $1 AND status = 'pending'`, [sub.poi_id]);
       return { status: 'auto_hidden', trust_score: trustScore };
     }
-
     return { status: 'queued', trust_score: trustScore };
   }
 }
@@ -483,68 +360,53 @@ export class TakedownGatekeeper {
 
 ---
 
-## 7. Priority Human Moderation Queue & One-Step Rollback
+## 7. Moderation Queue & One-Step Rollback
 
-### 7.1 Moderation Queue Workflow (<4 Hour Review SLA)
-All auto-hidden locations immediately create an escalated ticket in the dpMaps Admin Portal:
+### 7.1 Tier 2 Manual Review (< 4 h SLA)
+Auto-hidden tickets land in the admin portal with reporter justifications, 90-day trip evidence counts, and three actions: **Confirm Takedown** (permanent, decouple queries), **Restore Place** (strike abusers' trust), **Anonymize Name** (coarse landmark/intersection per Stage 010). SLA clock: `adjudicated_at - reported_at < 4 h`; an automated on-call alert fires at 3 h `[ESTIMATE]`. Coordinated-sabotage findings add `prior_abuse_strikes += 1` (−50 trust each).
 
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                        DPMAPS PRIORITY MODERATION QUEUE                                │
-├────────────────────────────────────────────────────────────────────────────────────────┤
-│ Entity ID: 8f4e2b10-6c9a-412d-98e3-0c1a9f0e4b88   | Status: AUTO-HIDDEN (2h remaining) │
-│ Canonical Name: "Khan Mansion"                    | Point Type: building               │
-│ Location: Sector 11, Uttara, Dhaka                | 90-Day Trips: 28 riders / 8 drivers│
-│                                                                                        │
-│ Takedown Reports (3 Verified):                                                         │
-│ 1. User #4812 (Score: 85): "This is a private home, not a commercial venue."           │
-│ 2. User #9102 (Score: 70): "Owner requested removal of residential building name."    │
-│ 3. User #1194 (Score: 90): "Private residential house."                                │
-│                                                                                        │
-│ [ Action 1: Confirm Takedown ] ──► Permanently marks suppressed, decouples queries.    │
-│ [ Action 2: Restore Place ]    ──► Restores to public_pois, applies strike to abusers. │
-│ [ Action 3: Anonymize Name ]   ──► Edits canonical_name to coarse landmark/intersection│
-└────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-- **SLA Alerting:** If an auto-hidden ticket remains unreviewed after **3 hours**, an automated PagerDuty alert notifies the on-call geospatial SRE.
-- **Abuse Penalty Feedback:** If an admin determines a takedown campaign was coordinated commercial sabotage, the reporting accounts receive an abuse strike (`prior_abuse_strikes += 1`), zeroing out their trust scores across future reports.
-
-### 7.2 One-Step Release Rollback Protocol
-If an entire monthly publication manifest (`vYYYY.MM.BUILD`) exhibits widespread naming defects or unintended leaks:
-```bash
-# SRE Emergency Rollback Command
-npm run dpmaps:release -- --rollback-to pub-2026-10-01 --reason "Emergency rollback: naming anomaly"
-```
-
-1. **Atomic Pointer Switch:** Updates `platform_config.active_release_id` to the previous manifest snapshot in PostgreSQL.
-2. **MeiliSearch Fast Swap:** Re-points MeiliSearch index alias to the backup index snapshot matching the rollback manifest.
-3. **Suppression Invariant:** The Redis suppression set `dpmaps:suppression:active_place_ids` is **NOT cleared**. All emergency takedowns executed since the rollback release remain actively suppressed, preventing revived privacy leaks.
+### 7.2 One-Step Rollback
+`npm run dpmaps:release -- --rollback-to pub-2026-10-01` switches `active_release_id`, re-points MeiliSearch aliases, and invalidates tile caches. **The Redis suppression set is never cleared by rollback** — emergency takedowns persist, preventing revived privacy leaks.
 
 ---
 
 ## 8. Unit Testing Matrix & Privacy Verification
 
-| Test Case | Scenario / Parameters | Expected Outcome | Rationale |
+| Test Case | Scenario | Expected | Rationale |
 |---|---|:---:|---|
-| **TC-011-01** | Query with residential flat (*"Flat 4B"*) | **DROPPED** | Class 1 invariant: Unit specifics never enter public ledger. |
-| **TC-011-02** | Query with personal relation (*"Mamur bari"*) | **PRIVATE ONLY** | Class 2 invariant: Routed to private user history only. |
-| **TC-011-03** | Building with 12 distinct riders over 90 days | **UNINDEXED** | Convergence Rule: Fails 15-rider minimum threshold. |
-| **TC-011-04** | Building with 22 riders across 4 weeks | **INDEXED** | Convergence Rule: Passes diversity and temporal spread. |
-| **TC-011-05** | Unverified account submits takedown report | **QUEUED (NO AUTO-HIDE)** | Trust score = 0 (fails phone verification gate). |
-| **TC-011-06** | 1 High-trust report filed | **QUEUED (NO AUTO-HIDE)** | Threshold requires $\ge 3$ verified reports within 24 hours. |
-| **TC-011-07** | 3 High-trust reports within 24 hours | **AUTO-HIDDEN (<60s)** | Hits threshold: Instant Redis suppression & MeiliSearch delete. |
-| **TC-011-08** | Reporter files 2 reports in 24 hours | **RATE LIMITED** | Global rate limit: Max 1 report per user per 24 hours. |
-| **TC-011-09** | Restoring suppressed POI via admin tool | **RESTORED** | Cleared from Redis Set, re-indexed into MeiliSearch. |
-| **TC-011-10** | Release rollback executed | **ROLLBACK SUCCESSFUL** | Manifest reverts; active suppression set preserved. |
+| TC-011-01 | *"Flat 4B"* query | DROPPED | Class 1 invariant |
+| TC-011-02 | *"Mamur bari"* query | PRIVATE ONLY | Class 2 invariant |
+| TC-011-03 | named building, 12 riders / 90 d | UNINDEXED | convergence fails diversity |
+| TC-011-04 | named building, 22 riders / 4 weeks, clean name | INDEXABLE | convergence passes |
+| TC-011-05 | unverified phone report | QUEUED | trust 0 |
+| TC-011-06 | 1 high-trust qualified report | QUEUED | threshold is 3 |
+| TC-011-07 | 3 qualified travelers / 24 h | AUTO-HIDDEN (Tier 1 < 1 h) | threshold + traveler qualifier |
+| **TC-011-08** | 3 high-trust reports, **none** rode to the cell | **QUEUED (NO AUTO-HIDE)** | F-011-2 sybil defense |
+| **TC-011-09** | reporter rode to cell 100 days ago | **QUEUED** | 90-day traveler window |
+| TC-011-10 | 2 reports / 24 h from one user | RATE LIMITED | sliding-window rate limit |
+| TC-011-11 | admin restore after review | RESTORED | Redis Set sRem + re-index both indexes |
+| TC-011-12 | release rollback with active suppressions | SUPPRESSIONS PERSIST | rollback never clears the set |
+| TC-011-13 | unit/flat string at 25-rider convergence | STILL BARRED | categorical privacy rule (F-011-4) |
 
 ---
 
 ## 9. Deliverables & Definition of Done
 
-- [ ] **Privacy Ingestion Guardrails:** Automated regex filters deployed in query pipeline blocking unit numbers, phone numbers, and personal relationship markers.
-- [ ] **Database Schemas:** Tables `dpmaps.suppressions` and `dpmaps.takedown_reports` deployed with index optimization.
-- [ ] **Emergency Suppression Service:** `EmergencySuppressionService` implemented and verified, achieving edge suppression in $< 60\text{ seconds}$ across Redis and MeiliSearch.
-- [ ] **Reporter Trust Gatekeeper:** `TakedownGatekeeper` implemented enforcing phone verification, account age, completed rides, and anti-sabotage rate limits.
-- [ ] **Admin Moderation Queue:** Dashboard operational with $< 4\text{ hour}$ review SLA tracking and PagerDuty escalation.
-- [ ] **Rollback Runbook:** One-step release manifest rollback script tested in staging, confirming suppression set preservation.
+- [ ] Privacy ingestion guardrails (Classes 1–4) deployed as pipeline invariants with unit tests TC-011-01/02/13.
+- [ ] Convergence rule engine wired to Stage 009 evidence; residential boundary documented and enforced categorically (F-011-4).
+- [ ] Redis Set / sliding-window suppression (`dpmaps:suppression:active_place_ids`, TTL-on-first-add counters) replacing all Bloom-filter references (F-011-1).
+- [ ] Traveler-qualified reporting enforced: `traveler_qualified` recorded; unqualified reports can never trip auto-hide (TC-011-08/09) (F-011-2).
+- [ ] `suppressions` writes/reads conformant to Stage 003 §4.5 columns and predicates; SLA dashboards track `reported_at → applied_at` (< 1 h) and `reported_at → adjudicated_at` (< 4 h) (F-011-3, F-011-5).
+- [ ] `provenance_events` inserts conformant (enum event types, `target_record_hash`, `event_hash`).
+- [ ] Dual-index MeiliSearch purge (`first_party_pois`, `osm_pois`) verified < 60 s end-to-end `[ESTIMATE]`.
+- [ ] Moderation queue with < 4 h SLA alerting; one-step rollback preserves suppressions.
+- [ ] Pseudonym/retention facts aligned: 135-day keys, 90-day ledger, 30-day raw purge.
+
+---
+
+## 10. Revision Changelog
+
+| Revision | Date | Author / Context | Summary of Major Changes |
+|---|---|---|---|
+| Rev 2.0 | 2026-10-22 | Orchestrator (audited baseline) | Convergence rule, privacy classes, reporter trust score, emergency suppression, moderation queue. |
+| Rev 2.1 | 2026-10-22 | Lead Planning & Systems Architecture (batch-2 audit) | **Suppression Semantics, Sybil Defense & SLA Alignment:**<br>1. **Component rename (F-011-1):** Bloom filter → Redis Set / sliding-window counters (TTL-on-first-add; point deletion semantics).<br>2. **Traveler-qualified reporting (F-011-2):** hard qualifier — completed ride to the destination H3 cell (k=1 ring) within 90 days before a report counts toward auto-hide; searches never qualify (TC-011-08/09).<br>3. **Dual-tier SLA (F-011-3):** Tier 1 < 1 h automated / Tier 2 < 4 h manual, measured on Stage 003 `reported_at`/`applied_at`/`adjudicated_at` with `suppression_target_sla` mapping.<br>4. **Residential boundary (F-011-4):** convergent named houses publishable; unit numbers, resident names, Home/Work labels categorically barred.<br>5. **Schema conformance (F-011-5/6):** `suppressions` rewritten to the Stage 003 §4.5 columns/predicates (no invented `active`/`poi_id`/`notes`); `provenance_events` inserts conformant; `takedown_reports` moved to the Stage 003 Rev 2.4 adoption brief with `traveler_qualified`.<br>6. **Bundle (F-011-7):** dual-index Meili purge; 135-day key facts; sliding-window TTL fix; `[ESTIMATE]`/`[UNVERIFIED]` labels (incl. removal of the unverified "40%" claim). |
