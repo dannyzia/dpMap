@@ -129,15 +129,17 @@ The admin decides when to switch. Month 3 to 4 is a target, not a rule. Gates ar
 | 001 Phase 0 seeding and data assets | partiallydone | Rev 2.2 applied per owner. Rev 2.1 verified by running the ingestion script on the real file (49,881 rows). |
 | 002 Provenance firewall and legal | NotDone | Rev 2.1 verified. Rev 2.2 patch (fuzz-test scoping, egress logging, hash coverage, phone regex, `GETDEL`, receipts, quarantine, legal gate) applied per owner, not re-read. |
 | 003 Storage schema and evidence ledger | NotDone | Rev 2.2 applied per scratchpad Postgres 16 verification (view 5× overcounting fixed via active_dedup_key single-key join, CALL partman.run_maintenance_proc syntax, 26 canonical categories CHECK with synonym mapping, ledger_invalidations 90d retention prune, composite PK on osm_pois, immutable partial index on suppressions, trip_hash idempotency UNIQUE constraint). Ready for re-audit. |
-| 005, 008, 009, 011 | NotDone | First pass only (see below). |
-| 004, 006, 007, 010, 012 to 016 | NotDone | Not yet reviewed. |
+| 004 OSRM routing engine and dynamic traffic | NotDone | Rev 2.1 applied per audit (TOD-learned speed pipeline with segment_speeds_tod, multiplicative correction k(v,b), per-edge map-matching, 300ms timeout, relative ETA cutover gates ≤ 12% median / ≤ 25% p95, car/bike/cng profiles). |
+| 005 Dispatch router and shadow benchmarking | NotDone | Rev 2.1 applied per audit (first-class mode 0 off, clean-room Redis shadow payload without vendor quotes, correlation via trip_hash, Stage 003 §4.7 DDL alignment, 18 km/h Haversine fix, Gate 1 median & vendor-parity repair). |
+| 008, 009, 011 | NotDone | First pass only (see below). |
+| 006, 007, 010, 012 to 016 | NotDone | Not yet reviewed. |
 
 **Stage 003 status:** Rev 2.2 applied (view 5× overcounting fixed via `active_dedup_key` single-key join, `CALL partman.run_maintenance_proc` syntax, 26 canonical categories CHECK with synonym mapping, `ledger_invalidations` 90d retention prune, composite PK on `osm_pois`, immutable partial index on `suppressions`, `trip_hash` idempotency UNIQUE constraint, 135-day key schedule, clean-room evaluation tables with only error percentages, and dual-tier takedown SLA <1hr auto / <4hr review). Ready for independent audit.
 
 **First-pass findings in other stages:**
-- 005 and 008: no explicit `off` mode (it falls into shadow); `primary` search should call the vendor only on zero local hits, not fewer than 3; no defined path from a tapped vendor suggestion to dispatch coordinates (use a short-TTL session cache with `GETDEL`); the shadow benchmark has no `trip_id` link and ignores the vendor result.
+- 008: primary search should call the vendor only on zero local hits, not fewer than 3; two separate indexes (first-party and OSM) merged at query time; mixed autocomplete from launch.
 - 009: place IDs derived from name and cell (conflicts with Stage 003 random UUIDs); gate 5 (margin) can never bind when gate 4 (70% share) is met; the Wilson gate effectively needs about 23 effective votes at 70% share.
-- 011: "Bloom filter" is really a Redis set (rename); three aged accounts can auto-hide any place, so require reporters to have traveled there.
+- 011: "Bloom filter" is really a Redis set (rename); three aged accounts can auto-hide any place, so require reporters to have traveled there; dual-tier takedown SLA (<1hr auto / <4hr review).
 
 ---
 

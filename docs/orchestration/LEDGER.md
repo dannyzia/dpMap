@@ -14,8 +14,8 @@ Source of truth: `AGENTS.md`, `docs/plans/000_TOC.md`, `docs/plans/independent-m
 | `DPM-F-001` | Stage 001: Phase 0 Landmark Seeding & Ingestion | 0 | Reviewed (Rev 2.2 applied) | `PARTIALLY_BUILT` | Ingestion script verified on 49,881 rows; Pin Tool v2 pending |
 | `DPM-F-002` | Stage 002: Provenance Firewall & Legal Compliance | 0–1 | Rev 2.2 patch applied, unverified | `NOT_BUILT` | Legal gate items 3, 7, 14, 15, 16, 17 open |
 | `DPM-F-003` | Stage 003: Storage Schemas & 90-Day Evidence Ledger | 1 | Reviewed (Rev 2.2 applied) | `NOT_BUILT` | 135-day key schedule, cold-start mode, clean-room eval columns, pg_partman 5.x 90d retention, Kish weights view with active_dedup_key join, 26 canonical categories CHECK with synonym mapping |
-| `DPM-F-004` | Stage 004: OSRM Routing Engine & Dynamic Traffic | 1 | Unreviewed | `NOT_BUILT` | Docker & Geofabrik 339MB PBF |
-| `DPM-F-005` | Stage 005: Dispatch Router & Shadow Benchmarking | 1 | First pass only | `NOT_BUILT` | Mode 0 (off), primary fallback, session cache |
+| `DPM-F-004` | Stage 004: OSRM Routing Engine & Dynamic Traffic | 1 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | TOD-learned speed pipeline, multiplicative correction layer k(v,b), relative ETA gates (never flat minutes), 300ms timeout, car/bike/cng profiles |
+| `DPM-F-005` | Stage 005: Dispatch Router & Shadow Benchmarking | 1 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | Four-mode toggle (mode 0 off), clean-room Redis shadow payload, trip_hash correlation, Stage 003 §4.7 DDL alignment, 18 km/h Haversine fix |
 | `DPM-F-006` | Stage 006: Vector Tiles, PMTiles & Bengali Glyphs | 0 & 3 | Unreviewed | `NOT_BUILT` | Planetiler, R2, Noto Sans Bengali |
 | `DPM-F-007` | Stage 007: Text Normalization & Alias Clustering | 1 | Unreviewed | `NOT_BUILT` | Unicode folding, direction locking, phonetics |
 | `DPM-F-008` | Stage 008: MeiliSearch Engine & Mixed Autocomplete | 1 | First pass only | `NOT_BUILT` | Separate OSM & first-party indexes |
@@ -39,5 +39,8 @@ Source of truth: `AGENTS.md`, `docs/plans/000_TOC.md`, `docs/plans/independent-m
 | `DPM-T-003` | `DPM-F-003` | Independent audit of patched Stage 003 storage plan | `A-AUD-1` | `DPM-T-002` | `docs/plans/003_storage_schema_and_continuous_evidence_ledger.md` | `DONE` | Audit completed against scratch Postgres 16; findings returned | 2026-10-22 |
 | `DPM-T-004` | `DPM-F-003` | Apply Rev 2.1 patch brief (clean-room eval columns, 135d keys & cold start, pg_partman 5.x 90d retention, Kish weights view, 37-category CHECK) | `Orchestrator` | `DPM-T-003` | `docs/plans/003_storage_schema_and_continuous_evidence_ledger.md` | `DONE` | Rev 2.1 patched with changelog | 2026-10-22 |
 | `DPM-T-005` | `DPM-F-003` | Apply Rev 2.2 patch brief (view 5× overcount fix via active_dedup_key join, CALL partman.run_maintenance_proc syntax, 26 canonical categories CHECK, ledger_invalidations 90d prune, composite PK on osm_pois, trip_hash idempotency UNIQUE constraint) | `Orchestrator` | `DPM-T-004` | `docs/plans/003_storage_schema_and_continuous_evidence_ledger.md` | `DONE` | Rev 2.2 patched with changelog | 2026-10-22 |
+| `DPM-T-006` | `DPM-F-004` | Audit and apply Rev 2.1 patch to Stage 004 (OSRM TOD-learned ETA engine & relative gates) | `Planning Model` | none | `docs/plans/004_osrm_routing_engine_and_dynamic_traffic.md` | `DONE` | Rev 2.1 patched with changelog | 2026-10-22 |
+| `DPM-T-007` | `DPM-F-005` | Audit and apply Rev 2.1 patch to Stage 005 (Dispatch waterfall, mode 0 off, clean-room shadow benchmarking) | `Planning Model` | none | `docs/plans/005_dispatch_router_and_shadow_benchmarking.md` | `DONE` | Rev 2.1 patched with changelog | 2026-10-22 |
+
 
 

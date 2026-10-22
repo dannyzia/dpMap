@@ -84,4 +84,5 @@ tools/poi-tool/node_modules/
 scratch/
 tmp/
 temp/
+.kilo/
 docs/orchestration/reports/*.log
