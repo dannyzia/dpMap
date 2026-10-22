@@ -78,6 +78,7 @@ htmlcov/
 # Pin Tool Local Development State
 tools/poi-tool/data/
 tools/poi-tool/node_modules/
+tools/poi-tool/*.db
 
 # Logs & Scratch Directories
 *.log

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review places</title>
+<style>
+  :root { --ink:#1b2a2f; --muted:#5b6b70; --line:#d9e0e2; --accent:#0b6e6e; --danger:#b3261e; --ok:#1e7a46; --pending:#d98a00; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui,"Segoe UI","Noto Sans Bengali","Nirmala UI",sans-serif; color:var(--ink); }
+  header { padding:16px 20px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; }
+  h1 { font-size:20px; margin:0; }
+  .tabs, .exports { display:flex; gap:6px; flex-wrap:wrap; }
+  button, a.btn { font:inherit; font-size:14px; padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:#fff; color:var(--ink); cursor:pointer; text-decoration:none; }
+  button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.ok { color:var(--ok); border-color:var(--ok); }
+  button.bad { color:var(--danger); border-color:var(--danger); }
+  button:focus-visible, a.btn:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .wrap { padding:0 20px 40px; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; margin-top:12px; font-size:14px; }
+  th, td { text-align:left; padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-weight:600; color:var(--muted); white-space:nowrap; }
+  td.actions { white-space:nowrap; }
+  td.actions button { margin-right:4px; }
+  .empty { padding:40px 0; color:var(--muted); }
+  .st { font-weight:600; }
+  .st.pending { color:var(--pending); } .st.approved { color:var(--ok); } .st.rejected { color:var(--danger); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Review places</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="exports">
+    <a class="btn" href="/api/admin/export.geojson?status=approved">Approved (GeoJSON)</a>
+    <a class="btn" href="/api/admin/export.csv?status=approved">Approved (CSV)</a>
+    <a class="btn" href="/api/admin/export.json?status=approved">Approved (JSON, tool format)</a>
+    <a class="btn" href="/api/admin/export.public_pois.sql?status=approved">public_pois (SQL)</a>
+    <a class="btn" href="/api/admin/export.public_pois.json?status=approved">public_pois (JSON)</a>
+  </div>
+</header>
+<div class="wrap">
+  <table>
+    <thead><tr>
+      <th>Bangla name</th><th>English name</th><th>Category</th><th>Location</th>
+      <th>Added by</th><th>Notes</th><th>Status</th><th>Actions</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty" style="display:none">Nothing here.</div>
+</div>
+
+<script>
+(function () {
+  const STATUSES = ['pending', 'approved', 'rejected', 'all'];
+  let current = 'pending';
+
+  function el(tag, props, children) {
+    const e = document.createElement(tag);
+    Object.assign(e, props || {});
+    (children || []).forEach(c => e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+    return e;
+  }
+
+  function api(method, url, body) {
+    return fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(async r => {
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Request failed');
+      return d;
+    });
+  }
+
+  function renderTabs(counts) {
+    const tabs = document.getElementById('tabs');
+    tabs.innerHTML = '';
+    STATUSES.forEach(s => {
+      const n = s === 'all'
+        ? Object.values(counts).reduce((a, b) => a + b, 0)
+        : (counts[s] || 0);
+      const b = el('button', { textContent: s[0].toUpperCase() + s.slice(1) + ' (' + n + ')' });
+      if (s === current) b.className = 'active';
+      b.onclick = () => { current = s; load(); };
+      tabs.appendChild(b);
+    });
+  }
+
+  function act(label, cls, fn) {
+    const b = el('button', { textContent: label, className: cls || '' });
+    b.onclick = () => fn().then(load).catch(e => alert(e.message));
+    return b;
+  }
+
+  function load() {
+    api('GET', '/api/admin/pois?status=' + current).then(d => {
+      renderTabs(d.counts);
+      const tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
+      document.getElementById('empty').style.display = d.rows.length ? 'none' : 'block';
+      d.rows.forEach(r => {
+        const osm = 'https://www.openstreetmap.org/?mlat=' + r.lat + '&mlon=' + r.lng + '#map=19/' + r.lat + '/' + r.lng;
+        const tr = el('tr', {}, [
+          el('td', { textContent: r.name_bn }),
+          el('td', { textContent: r.name_en }),
+          el('td', { textContent: r.alias_bn || r.alias_en || '—' }),
+          el('td', { textContent: r.category }),
+          el('td', { className: 'st ' + (r.status || ''), style: 'font-size:12px;color:var(--muted)' }, [
+            r.point_type ? el('div', { textContent: r.point_type }) : null,
+            r.h3_res10 ? el('div', { textContent: 'h3-' + r.h3_res10.slice(0, 9) + '…' }) : null,
+          ]),
+          el('td', { textContent: r.warranty_version || '—' }),
+          el('td', {}, [el('a', { href: osm, target: '_blank', rel: 'noopener', textContent: r.lat.toFixed(5) + ', ' + r.lng.toFixed(5) })]),
+          el('td', { textContent: r.contributor }),
+          el('td', { textContent: r.notes }),
+          el('td', {}, [el('span', { className: 'st ' + r.status, textContent: r.status })]),           el('td', { className: 'actions' }, [
+            act('Approve', 'ok', () => api('PATCH', '/api/admin/pois/' + r.id, { status: 'approved', warranty_released: true })),
+            act('Reject', 'bad', () => api('PATCH', '/api/admin/pois/' + r.id, { status: 'rejected' })),
+            act('Edit', '', () => api('PATCH', '/api/admin/pois/' + r.id, patchForm(r))),
+            act('Delete', 'bad', () => {
+              if (!confirm('Delete this place permanently?')) return Promise.resolve();
+              return api('DELETE', '/api/admin/pois/' + r.id);
+            })
+          ])
+        ]);
+        tbody.appendChild(tr);
+      });
+    }).catch(e => alert(e.message));
+  }
+
+  load();
+
+  function patchForm(r) {
+    const bn = prompt('Bangla name', r.name_bn);
+    if (bn === null) return {};
+    const en = prompt('English name', r.name_en);
+    if (en === null) return {};
+    const alB = prompt('Alias (Bangla, optional)', r.alias_bn || '');
+    if (alB === null) return {};
+    const alE = prompt('Alias (English, optional)', r.alias_en || '');
+    if (alE === null) return {};
+    const cat = prompt('Category', r.category);
+    if (cat === null) return {};
+    const pt = prompt('Point type (building/entrance/dropoff_point/area)', r.point_type || 'entrance');
+    if (pt === null) return {};
+    const notes = prompt('Notes', r.notes || '');
+    if (notes === null) return {};
+    const parent = prompt('Parent place ID (blank = none)', String(r.parent_place_id || ''));
+    if (parent === null) return {};
+    const out = { name_bn: bn, name_en: en, alias_bn: alB, alias_en: alE, category: cat, point_type: pt, notes };
+    if (parent !== '' && parent !== 'null' && parent !== 'NaN' && parent !== 'undefined') {
+      const n = Number(parent);
+      if (Number.isFinite(n)) out.parent_place_id = n;
+    }
+    return out;
+  }
+})();
+</script>
+</body>
+</html>

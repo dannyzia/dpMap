@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pin a place</title>      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.1.0/reset.css">
+<style>
+  :root {
+    --ink: #1b2a2f;
+    --muted: #5b6b70;
+    --line: #d9e0e2;
+    --bg: #ffffff;
+    --accent: #0b6e6e;
+    --accent-ink: #ffffff;
+    --danger: #b3261e;
+    --ok: #1e7a46;
+    --pending: #d98a00;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: system-ui, "Segoe UI", "Noto Sans Bengali", "Nirmala UI", sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  .app { display: grid; grid-template-columns: 360px 1fr; height: 100%; }
+  .panel {
+    padding: 18px 18px 24px;
+    overflow-y: auto;
+    border-right: 1px solid var(--line);
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 16px; line-height: 1.4; }
+  .search { display: flex; gap: 6px; margin-bottom: 16px; }
+  .search input { flex: 1; }
+  label { display: block; font-size: 14px; font-weight: 600; margin: 12px 0 4px; }
+  input, select, textarea {
+    width: 100%; font: inherit; padding: 9px 10px;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink);
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  button {
+    font: inherit; padding: 9px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: #fff; color: var(--ink);
+  }
+  button.primary {
+    background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+    font-weight: 600; width: 100%; margin-top: 16px; padding: 11px;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .pinbox {
+    margin-top: 6px; padding: 10px; border-radius: 6px; font-size: 14px;
+    background: #eef5f5; border: 1px dashed var(--accent); color: var(--ink);
+  }
+  .pinbox.empty { background: #fff7e6; border-color: var(--pending); }
+  .msg { margin-top: 12px; font-size: 14px; padding: 10px; border-radius: 6px; display: none; }
+  .msg.show { display: block; }
+  .msg.err { background: #fdecea; color: var(--danger); }
+  .msg.ok { background: #e7f5ec; color: var(--ok); }
+  .legend { margin-top: 18px; font-size: 13px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: baseline; }
+  .count { margin-top: 6px; font-size: 13px; color: var(--muted); }
+  #map { height: 100%; width: 100%; }
+  .locate {
+    position: absolute; z-index: 1000; right: 10px; bottom: 28px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.3);
+  }
+  .mapwrap { position: relative; height: 100%; }
+  @media (max-width: 800px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; }
+    .mapwrap { order: 1; }
+    .panel { order: 2; border-right: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="panel">
+    <h1>Pin a place</h1>
+    <p class="sub">Find the area, tap the map where the place is, then enter its name. Pins you add are reviewed before they go live.</p>
+
+    <form class="search" id="searchForm">
+      <input id="searchInput" type="text" placeholder="Go to an area, e.g. Mirpur 10" aria-label="Go to an area">
+      <button type="submit">Go</button>
+    </form>
+
+    <form id="poiForm" autocomplete="off">
+      <label>Pin location</label>
+      <div class="pinbox empty" id="pinbox">Tap the map to place the pin. You can drag it to adjust.</div>
+
+      <label for="name_bn">Name in Bangla</label>
+      <input id="name_bn" type="text" maxlength="120" placeholder="যেমন: যমুনা ফিউচার পার্ক">
+
+      <label for="name_en">Name in English</label>
+      <input id="name_en" type="text" maxlength="120" placeholder="e.g. Jamuna Future Park">
+
+      <fieldset style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:6px">
+        <legend style="font-size:13px;font-weight:600;color:var(--muted);padding:0 4px">Also-known-as (optional)</legend>
+        <label for="alias_bn" style="margin-top:8px;font-size:13px">Alias in Bangla</label>
+        <input id="alias_bn" type="text" maxlength="200" placeholder="Colloquial / landmark nickname">
+        <label for="alias_en" style="margin-top:8px;font-size:13px">Alias in English</label>
+        <input id="alias_en" type="text" maxlength="200" placeholder="e.g. Bashundhara R/A Block A">
+      </fieldset>
+
+      <label for="category">Category</label>
+      <select id="category" required><option value="">Choose a category</option></select>
+
+      <label for="point_type">Point type</label>
+      <select id="point_type">
+        <option value="entrance">Entrance / gate (default)</option>
+        <option value="building">Building centroid</option>
+        <option value="dropoff_point">Drop-off point</option>
+        <option value="area">Area / polygon centroid</option>
+      </select>
+
+      <label for="parent_place">Parent venue (optional, for gates)</label>
+      <select id="parent_place">
+        <option value="" data-current-venue>— none (this is the venue) —</option>
+      </select>
+
+      <label for="notes">Notes (optional)</label>
+      <textarea id="notes" maxlength="500" placeholder="e.g. Pin is at Gate 2. Cars can stop on the service road."></textarea>
+
+      <label for="contributor">Your name</label>
+      <input id="contributor" type="text" maxlength="60" placeholder="So we know who added it">
+
+      <fieldset style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:14px;background:#f4f7f8">
+        <legend style="font-size:13px;font-weight:600;color:var(--muted);padding:0 4px">Clean-room warranty</legend>
+        <label style="display:flex;gap:12px;align-items:center;cursor:pointer;font-size:14px;margin-top:8px">
+          <input id="warranty" type="checkbox" style="width:auto">
+          <span>
+            I certify this pin was surveyed in the field (GPS ground truth).
+            It contains <strong>no vendor data, no scraped coordinates, no Barikoi/Google
+            return values</strong>, and I did not copy it from any map app.
+            I understand this warranty is recorded with the pin (version <span id="warrantyVersion"></span>).
+          </span>
+        </label>
+        <script>
+          (function () {
+            const cb = document.getElementById('warranty');
+            const ack = document.getElementById('warrantyAck');
+            if (cb && ack) {
+              cb.addEventListener('change', function () {
+                ack.textContent = this.checked
+                  ? 'Warranty accepted — version ' + document.getElementById('warrantyVersion').textContent + ' recorded with this pin.'
+                  : 'Warranty not accepted. You must accept it to submit a pin.';
+              });
+            }
+          })();
+        </script>
+        <input type="hidden" name="warranty_checked" id="warranty_checked" value="false">
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px" id="warrantyAck"></div>
+      </fieldset>
+
+      <button class="primary" id="saveBtn" type="submit">Save place</button>
+      <div class="msg" id="msg" role="status"></div>
+    </form>
+
+    <div class="legend">
+      <span><span class="dot" style="background:var(--ok)"></span>Approved</span>
+      <span><span class="dot" style="background:var(--pending)"></span>Waiting for review</span>
+    </div>
+    <div class="count" id="count"></div>
+  </section>
+
+  <section class="mapwrap">
+    <div id="map"></div>
+    <button class="locate" id="locateBtn" type="button">My location</button>
+  </section>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const msg = $('msg');
+  let needsKey = false;
+  let pin = null;
+
+  function showMsg(text, kind) {
+    msg.textContent = text;
+    msg.className = 'msg show ' + kind;
+  }
+  function clearMsg() { msg.className = 'msg'; }
+
+  // ----- map -----
+  const map = L.map('map').setView([23.7806, 90.4075], 13); // Dhaka
+  const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  // Hard Rule 7: Pin Tool imagery is OpenStreetMap raster tiles only.
+  // No Esri, Bing, or Google imagery is offered or loaded by this tool.
+  L.control.layers({ 'Map': osm }, null, { position: 'topright' }).addTo(map);
+
+  const existing = L.layerGroup().addTo(map);
+
+  function loadPois() {
+    fetch('/api/pois').then(r => r.json()).then(rows => {
+      existing.clearLayers();
+      rows.forEach(p => {
+        const color = p.status === 'approved' ? '#1e7a46' : '#d98a00';
+        const m = L.circleMarker([p.lat, p.lng], {
+          radius: 6, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 1
+        });
+        m.bindTooltip(p.name_bn || p.name_en, { direction: 'top' });
+        existing.addLayer(m);
+      });
+      $('count').textContent = rows.length + ' places pinned so far';
+    }).catch(() => {});
+  }
+
+  function setPin(latlng) {
+    if (pin) {
+      pin.setLatLng(latlng);
+    } else {
+      pin = L.marker(latlng, { draggable: true }).addTo(map);
+      pin.on('dragend', updatePinBox);
+    }
+    updatePinBox();
+  }
+  function updatePinBox() {
+    const p = pin.getLatLng();
+    const box = $('pinbox');
+    box.className = 'pinbox';
+    box.textContent = 'Pin placed at ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + '. Drag to adjust.';
+  }
+  function removePin() {
+    if (pin) { map.removeLayer(pin); pin = null; }
+    const box = $('pinbox');
+    box.className = 'pinbox empty';
+    box.textContent = 'Tap the map to place the pin. You can drag it to adjust.';
+  }
+
+  map.on('click', e => { clearMsg(); setPin(e.latlng); });
+
+  // ----- search (area navigation only) -----
+  $('searchForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const q = $('searchInput').value.trim();
+    if (!q) return;
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=bd&q=' + encodeURIComponent(q);
+    fetch(url).then(r => r.json()).then(list => {
+      if (!list.length) { showMsg('No area found for "' + q + '". Try another spelling.', 'err'); return; }
+      clearMsg();
+      map.setView([Number(list[0].lat), Number(list[0].lon)], 17);
+    }).catch(() => showMsg('Search is not available right now. Pan the map by hand.', 'err'));
+  });
+
+  $('locateBtn').addEventListener('click', () => {
+    map.locate({ setView: true, maxZoom: 18 });
+  });
+  map.on('locationerror', () => showMsg('Could not get your location. Allow location access or search for the area.', 'err'));
+
+  // ----- form -----
+  $('contributor').value = localStorage.getItem('dpmaps_contributor') || '';
+
+  fetch('/api/config').then(r => r.json()).then(cfg => {
+    needsKey = cfg.needsKey;
+    $('warrantyVersion').textContent = cfg.warrantyVersion || '?';
+    const catSel = $('category');
+    cfg.categories.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.key; o.textContent = c.label;
+      catSel.appendChild(o);
+    });
+    const ptSel = $('point_type');
+    cfg.pointTypes.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.key; o.textContent = c.label;
+      ptSel.appendChild(o);
+    });
+    $('poiForm').addEventListener('change', e => {
+      if (e.target && e.target.id === 'category') {
+        if (e.target.value === 'area' || e.target.value === 'shopping_mall' ||
+            e.target.value === 'supermarket' || e.target.value === 'park' ||
+            e.target.value === 'market') {
+          $('point_type').value = 'area';
+        } else {
+          $('point_type').value = 'entrance';
+        }
+      }
+    });
+  });
+
+  let parentVenues = [];
+  function refreshParentVenues() {
+    fetch('/api/pois').then(r => r.json()).then(rows => {
+      // Approved venues that can serve as parents: building/area point types.
+      const venues = rows.filter(p =>
+        p.status === 'approved' &&
+        (p.point_type === 'building' || p.point_type === 'area')
+      ).map(p => ({ id: p.id, label: (p.name_bn || p.name_en) + ' [' + p.category + ']' }));
+      const sel = $('parent_place');
+      sel.innerHTML = '';
+      const blank = document.createElement('option');
+      blank.value = ''; blank.setAttribute('data-current-venue', ''); blank.textContent = '— none —';
+      sel.appendChild(blank);
+      venues.forEach(v => {
+        const o = document.createElement('option');
+        o.value = v.id; o.textContent = v.label;
+        sel.appendChild(o);
+      });
+      parentVenues = venues;
+    }).catch(() => {});
+  }
+  refreshParentVenues();
+  loadPois();
+
+  $('poiForm').addEventListener('submit', e => {
+    e.preventDefault();
+    clearMsg();
+    if (!pin) { showMsg('Tap the map to place the pin first.', 'err'); return; }
+    const name_bn = $('name_bn').value.trim();
+    const name_en = $('name_en').value.trim();
+    if (!name_bn && !name_en) { showMsg('Enter the place name in Bangla or English.', 'err'); return; }
+    if (!$('category').value) { showMsg('Choose a category.', 'err'); return; }
+    if (!$('contributor').value.trim()) { showMsg('Enter your name.', 'err'); return; }
+    if (!$('warranty').checked) { showMsg('You must accept the clean-room warranty to submit a pin.', 'err'); return; }
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (needsKey) {
+      let key = localStorage.getItem('dpmaps_key');
+      if (!key) {
+        key = prompt('Enter the access key you were given:') || '';
+        if (!key) return;
+        localStorage.setItem('dpmaps_key', key);
+      }
+      headers['x-contributor-key'] = key;
+    }
+
+    const p = pin.getLatLng();
+    const btn = $('saveBtn');
+    btn.disabled = true;
+    fetch('/api/pois', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name_bn,
+        name_en,
+        alias_bn: $('alias_bn').value.trim(),
+        alias_en: $('alias_en').value.trim(),
+        category: $('category').value,
+        point_type: $('point_type').value,
+        notes: $('notes').value,
+        contributor: $('contributor').value,
+        parent_place_id: $('parent_place').value ? Number($('parent_place').value) : null,
+        lat: p.lat, lng: p.lng,
+        warranty_checked: true,
+        warranty_version: '1.0'
+      })
+    }).then(async r => {
+      const data = await r.json().catch(() => ({}));
+      if (r.status === 401) { localStorage.removeItem('dpmaps_key'); }
+      if (!r.ok) { showMsg(data.error || 'Could not save. Try again.', 'err'); return; }
+      localStorage.setItem('dpmaps_contributor', $('contributor').value.trim());
+      showMsg('Saved. It will go live after review.', 'ok');
+      $('name_bn').value = ''; $('name_en').value = '';
+      $('alias_bn').value = ''; $('alias_en').value = '';
+      $('notes').value = ''; $('category').value = ''; $('point_type').value = 'entrance';
+      $('parent_place').value = '';
+      removePin();
+      refreshParentVenues();
+      loadPois();
+    }).catch(() => showMsg('No connection. Check your internet and try again.', 'err'))
+      .finally(() => { btn.disabled = false; });
+  });
+
+  // When the map is clicked to place the first pin, refresh parent venue list
+  // (in case a new venue was just approved behind the scenes).
+  const originalClick = map.on;
+  map.on('click', e => { refreshParentVenues(); });
+
+  loadPois();
+})();
+</script>
+</body>
+</html>
