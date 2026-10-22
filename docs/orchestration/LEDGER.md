@@ -22,11 +22,11 @@ Source of truth: `AGENTS.md`, `docs/plans/000_TOC.md`, `docs/plans/independent-m
 | `DPM-F-009` | Stage 009: Winner Selection & Wilson Confidence | 2 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | UUIDv4 identity (no cell-derived names), Gate 5 on v_active_cluster_evidence cell shares, proved Wilson threshold n_eff >= 25 at p=0.70 (work-order ">= 23" rejected), k=1 ring aggregation, two-cycle demote-not-delete |
 | `DPM-F-010` | Stage 010: Naming Engine & Post-Trip Verification | 2 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | 4-tier hierarchy, bilingual publication gate (chk_poi_bilingual_active), post_trip_labels staging (cycle-bounded), poi_versions lineage, unindexed-cluster seeding |
 | `DPM-F-011` | Stage 011: Privacy Architecture & Takedowns | 1 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | Redis Set / sliding-window suppression (no Bloom), traveler-qualified reporting (ride to cell in 90 d), dual-tier SLA <1h/<4h on Stage 003 columns, categorical residential privacy boundary |
-| `DPM-F-012` | Stage 012: Anti-Manipulation & Sybil Resistance | 1 | Unreviewed | `NOT_BUILT` | Burst suppression, collusion dampening |
-| `DPM-F-013` | Stage 013: Geocoding, Address Parsing & Snapping | 2–3 | Unreviewed | `NOT_BUILT` | Reverse geocoder, perimeter gate snapping |
-| `DPM-F-014` | Stage 014: Saved Places Migration & Decoupling | 1–2 | Unreviewed | `NOT_BUILT` | Decouple vendor place IDs |
-| `DPM-F-015` | Stage 015: Evaluation Suites & Cutover Gates | 1–4 | Unreviewed | `NOT_BUILT` | Golden test sets, numeric cutover gates |
-| `DPM-F-016` | Stage 016: Infrastructure, HA & SRE Runbooks | 0–4 | Unreviewed | `NOT_BUILT` | Sizing model, standby failover, runbooks |
+| `DPM-F-012` | Stage 012: Anti-Manipulation & Sybil Resistance | 1 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | Side-table invalidation only (ledger immutable), layered caps (rider/driver/pair), 5×/48h res-10 burst quarantine, work-order enum crosswalk |
+| `DPM-F-013` | Stage 013: Geocoding, Address Parsing & Snapping | 2–3 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | 4-tier reverse waterfall (osm_road_names Tier 2), zero-hit ≤100m vendor fallback (response-only), clean-room parser, perimeter gate snapping (`perimeter_gate` taxonomy) |
+| `DPM-F-014` | Stage 014: Saved Places Migration & Decoupling | 1–2 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | 3-track migration, >30m needs_confirmation card, Home/Work disambiguation (no silent inference), sovereign_place_id UUID, legal framing fixed |
+| `DPM-F-015` | Stage 015: Evaluation Suites & Cutover Gates | 1–4 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | Stage 003 §4.7 column crosswalk (closes X-1), golden suites w/ monsoon, gate ladder 1A/1B/2 (TOC consensus + documented deviation) |
+| `DPM-F-016` | Stage 016: Infrastructure, HA & SRE Runbooks | 0–4 | Reviewed (Rev 2.1 applied) | `NOT_BUILT` | Stage 004 RSS-matched sizing (Phase-1 32GB) + network rows, Meili/PG replication, Runbooks A–D (crash failover, <1h takedown, mode rollback, graph re-ingestion) |
 
 ---
 
@@ -46,6 +46,8 @@ Source of truth: `AGENTS.md`, `docs/plans/000_TOC.md`, `docs/plans/independent-m
 | `DPM-T-010` | `DPM-F-003` | Apply Stage 003 Rev 2.4 additive patch (orders.user_id stub, takedown_reports, provisional_challengers, query_clusters.published_poi_id, dual search feed views) | `Orchestrator` | `DPM-T-009` | `docs/plans/003_storage_schema_and_continuous_evidence_ledger.md` | `DONE` | Rev 2.4 §4.10 + changelog; Postgres dry-run pending (`DPM-R-002.md` G-P2) | 2026-10-22 |
 | `DPM-T-011` | `DPM-F-006, DPM-F-007, DPM-F-010` | Audit and apply Rev 2.1 patches to Stages 006/007/010 (batch 3: clean-room cartography, scrubPii/locking/phonetics, naming & post-trip) | `Planning Model` | `DPM-T-010` | `docs/plans/006_*.md`, `docs/plans/007_*.md`, `docs/plans/010_*.md` | `DONE` | Rev 2.1 applied to all three; report `DPM-R-003.md` | 2026-10-22 |
 | `DPM-T-012` | `DPM-F-003` | Apply Stage 003 Rev 2.5 additive patch (post_trip_labels staging, chk_poi_bilingual_active) | `Orchestrator` | `DPM-T-011` | `docs/plans/003_storage_schema_and_continuous_evidence_ledger.md` | `DONE` | Rev 2.5 §4.11 + changelog; Postgres dry-run pending (`DPM-R-003.md` G-P1) | 2026-10-22 |
+| `DPM-T-013` | `DPM-F-012, DPM-F-013, DPM-F-014, DPM-F-015, DPM-F-016` | Audit and apply Rev 2.1 patches to Stages 012–016 (batch 4 FINAL: anti-manipulation, geocoding, saved-places, evaluation gates, infrastructure/runbooks) | `Planning Model` | `DPM-T-012` | `docs/plans/012_*.md` … `016_*.md` | `DONE` | Rev 2.1 applied to all five; report `DPM-R-004.md` | 2026-10-22 |
+| `DPM-T-014` | `DPM-F-003` | Apply Stage 003 Rev 2.6 additive patch (invalidation CHECK widening, osm_road_names, user_private_places sovereign identity) | `Orchestrator` | `DPM-T-013` | `docs/plans/003_storage_schema_and_continuous_evidence_ledger.md` | `DONE` | Rev 2.6 §4.12 + changelog; Postgres dry-run pending (`DPM-R-004.md` G-P1) | 2026-10-22 |
 
 
 

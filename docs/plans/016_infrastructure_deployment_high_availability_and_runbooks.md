@@ -1,339 +1,103 @@
 # Stage 016: Infrastructure Deployment, High Availability & SRE Runbooks Implementation Plan
 
-**Plan Identifier:** RIDE-dpMaps-PLAN-016  
-**Stage:** 16 of 16 (Production Infrastructure & Operational Reliability)  
-**Parent Document:** [`independent-mapping-engine-concept-paper.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/independent-mapping-engine-concept-paper.md) (§17.1–17.5, §18, §21)  
-**TOC Link:** [`000_TOC.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/000_TOC.md)  
-**Current Status:** **Revision 2.0 (Audited & Upgraded)**  
-**Target Phase:** Phase 0–4 (Staging Setup to Full Sovereign Operations)  
-**Primary Dependencies:** [`002_provenance_firewall_and_legal_compliance.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/002_provenance_firewall_and_legal_compliance.md), [`003_storage_schema_and_continuous_evidence_ledger.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/003_storage_schema_and_continuous_evidence_ledger.md), [`004_osrm_routing_engine_and_dynamic_traffic.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/004_osrm_routing_engine_and_dynamic_traffic.md), [`005_dispatch_router_and_shadow_benchmarking.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/005_dispatch_router_and_shadow_benchmarking.md), [`006_vector_tiles_pmtiles_and_bengali_glyphs.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/006_vector_tiles_pmtiles_and_bengali_glyphs.md), [`008_search_engine_meilisearch_and_mixed_autocomplete.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/008_search_engine_meilisearch_and_mixed_autocomplete.md)
+**Plan Identifier:** RIDE-dpMaps-PLAN-016 (Revision 2.1 — Physics-Matched Sizing, HA Failover & Runbooks A–D)
+**Stage:** 16 of 16 (Infrastructure, SRE & Operational Runbooks)
+**Parent Document:** [`independent-mapping-engine-concept-paper.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/independent-mapping-engine-concept-paper.md) (§19–21)
+**TOC Link:** [`000_TOC.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/000_TOC.md)
+**Current Status:** **NotDone**
+**Primary Dependencies:** Stages 003–011 (deployed services), 004 (OSRM physics), 006 (R2/CDN), 011 (takedown SLA), 015 (gates)
 
 ---
 
 ## 1. Executive Summary & Objective
 
-Commercial mapping vendors operate as opaque black boxes whose unexpected outages, rate limit throttles, or API price increases directly disrupt fleet dispatches and paralyze ride-hailing operations. True geospatial sovereignty requires self-hosted, deterministic, highly available infrastructure with predictable resource consumption, zero-downtime hot reloads, and automated failover.
+Sovereignty requires self-hosted, deterministic, highly available infrastructure. Stage 016 delivers the production topology, physics-matched sizing, automated failover, and the SRE runbooks (A–D):
 
-Stage 016 establishes the complete **Production Infrastructure Deployment, High Availability Topology & SRE Runbooks**:
-1. **The Comprehensive Workload Capacity Model:** Derived from 20.4 functional geospatial requests per completed order across 4 scaling tiers (500 to 25,000 orders/day).
-2. **Multi-Node Production Topology:** 6 decoupled subsystems (Primary OSRM, Standby OSRM, MeiliSearch Cluster, PostGIS Database, Redis State Cluster, and Cloudflare R2 CDN).
-3. **Multi-Profile OSRM Container Architecture:** Parallel instances for Car (5001), Bike (5002), and CNG (5003) behind an internal NGINX Gateway (5000), utilizing shared-memory IPC (`osrm-datastore`) for zero-downtime live graph swaps.
-4. **Automated Hot Failover (<300ms SLA):** Upstream health polling with active standby redundancy ensuring uninterrupted fleet dispatch during hardware failure or container restarts.
-5. **Standardized SRE Incident Runbooks:** Exhaustive step-by-step procedures covering latency degradation, emergency takedowns, node crashes, graph updates, and one-step release rollbacks.
+1. **Capacity model** by scale tier with RAM/NVMe/CPU/**network** rows (F-016-1), sized to Stage 004's measured-graph expectations.
+2. **HA topology (F-016-2):** OSRM Active/Hot-Standby (3-profile), MeiliSearch replica, PostgreSQL streaming replication, Redis HA.
+3. **Runbooks A–D (F-016-3):** crash failover, emergency takedown (< 1 h SLA), mode rollback, Geofabrik graph re-ingestion.
 
----
-
-## 2. Production Workload & Capacity Model
-
-Every completed ride-hailing or delivery trip generates a deterministic sequence of internal geospatial operations across client and dispatch layers:
-
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                        GEOSPATIAL REQUEST MULTIPLIER DERIVATION                        │
-├────────────────────────────────────────────────────────────────────────────────────────┤
-│ 1. Routing & Distance Queries: 4.4 requests/order                                      │
-│    • 1.0 req: Upfront fare quote & ETA estimation (Origin -> Destination)             │
-│    • 1.4 req: Dispatch matchmaking driver candidate distance matrix (Driver -> Pickup)│
-│    • 1.0 req: Driver turn-by-turn navigation route generation                          │
-│    • 1.0 req: In-trip dynamic rerouting & post-trip distance reconciliation            │
-├────────────────────────────────────────────────────────────────────────────────────────┤
-│ 2. Search & Autocomplete Queries: 8.0 requests/order                                   │
-│    • 6.0 req: Keystroke prefix autocomplete lookups during destination entry           │
-│    • 1.0 req: Pickup point reverse geocoding pin drop resolution                       │
-│    • 1.0 req: Final candidate entity resolution and coordinate snapping                │
-├────────────────────────────────────────────────────────────────────────────────────────┤
-│ 3. Vector Map Tiles & Glyphs: 8.0 requests/order                                       │
-│    • 8.0 req: Viewport tile chunks loaded from edge cache during booking flow          │
-├────────────────────────────────────────────────────────────────────────────────────────┤
-│ TOTAL FUNCTIONAL WORKLOAD: Exactly 20.4 Requests per Completed Order                   │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 2.1 Concurrency & Peak Throughput Derivation
-- **Peak Hour Concentration:** 15% of daily trip volume occurs during the single busiest morning or evening peak hour.
-- **Micro-Burst Factor:** Peak-hour queries arrive with a 1.5× Poisson surge factor:
-  $$\text{Peak RPS} = \left( \frac{\text{Daily Orders} \times 0.15 \times 20.4}{3600 \text{ seconds}} \right) \times 1.5 = \frac{\text{Daily Orders} \times 20.4}{16000}$$
-
-| Parameter / Volume Tier | Tier 1: Launch (500/day) | Tier 2: Growth (2,000/day) | Tier 3: Scale (10,000/day) | Tier 4: Mature (25,000/day) |
-|---|:---:|:---:|:---:|:---:|
-| **Monthly Completed Orders** | 15,000 | 60,000 | 300,000 | 750,000 |
-| **Daily Requests (20.4/order)** | ~10,200 | ~40,800 | ~204,000 | ~510,000 |
-| **Peak Routing Throughput (4.4 req)** | **0.14 QPS** | **0.55 QPS** | **2.75 QPS** | **6.88 QPS** |
-| **Peak Search Throughput (8.0 req)** | **0.25 QPS** | **1.00 QPS** | **5.00 QPS** | **12.50 QPS** |
-| **Peak Vector Tile Egress (8.0 req)** | **0.25 RPS** | **1.00 RPS** | **5.00 RPS** | **12.50 RPS** |
-| **Aggregate Peak Infrastructure RPS** | **0.64 RPS** | **2.55 RPS** | **12.75 RPS** | **31.88 RPS** |
-
-### 2.2 Critical Infrastructure Sizing Insight
-Even at **25,000 completed orders per day** (750,000 orders/month), peak routing demand requires only **~6.88 queries per second**. Because a single modern CPU core running OSRM MLD processes **500 to 1,000 QPS**, compute capacity is never the infrastructure bottleneck. Sizing is strictly dictated by:
-1. **RAM Footprint:** Resident Memory (RSS) required to hold contracted routing graphs and MeiliSearch indexes entirely in memory.
-2. **Redundancy & High Availability:** Multi-node active/standby topologies to ensure zero dispatch interruptions during hardware crashes or updates.
+> [!NOTE]
+> All figures are **`[ESTIMATE]`** — AGENTS.md §10 marks OSRM RAM/throughput/latency on the real graph **UNVERIFIED** until measured.
 
 ---
 
-## 3. Multi-Node Production Topology
+## 2. Capacity & Sizing Matrix (F-016-1)
 
-```
-                                [ Cloudflare Edge / CDN ]
-                      (Vector Tiles PMTiles & Noto Sans Bengali Glyphs)
-                                            │
-                                            ▼
-                           [ NGINX Edge / Host-Only Ingress ]
-                                            │
-               ┌────────────────────────────┴────────────────────────────┐
-               ▼                                                         ▼
-  [ Node A: Primary Routing Cluster ]                       [ Node B: Standby Routing Cluster ]
-  • 8 vCPU / 16 GB RAM / 100 GB NVMe                        • 8 vCPU / 16 GB RAM / 100 GB NVMe
-  • NGINX Gateway Port 5000                                 • Identical hot-standby topology
-  • Car OSRM (Port 5001)                                    • Failover SLA: < 300ms
-  • Bike OSRM (Port 5002)                                   • Automatic upstream rerouting
-  • CNG OSRM (Port 5003)                                    • Pre-loaded MLD graph in memory
-  • Shared Memory IPC (osrm-datastore)                      • Shared Memory IPC (osrm-datastore)
-               │                                                         │
-               └────────────────────────────┬────────────────────────────┘
-                                            ▼
-                          [ Node C: Search & In-Memory Index ]
-                          • 4 vCPU / 8 GB RAM / 50 GB NVMe
-                          • MeiliSearch v1.6+ Cluster (52,000 POIs, ~120 MB RSS)
-                          • Sub-10ms prefix search & _geo proximity ranking
-                                            │
-                                            ▼
-                       [ Node D: PostgreSQL / PostGIS Database ]
-                       • 8 vCPU / 32 GB RAM / 250 GB NVMe
-                       • PostgreSQL 16 + PostGIS 3.4
-                       • pg_partman 5.x native weekly partitioning on ledger
-                       • Read replica for analytics & shadow calibration
-                                            │
-                                            ▼
-                       [ Node E: Redis In-Memory State Cluster ]
-                       • 2 vCPU / 4 GB RAM
-                       • Emergency suppression sets, rate limits, ephemeral quote cache
-```
+Per Stage 004 §2.1: each OSRM profile ≈ 2.4–2.6 GB RSS `[ESTIMATE]`; **3 profiles ≈ 7.2 GB**; **Blue/Green reload ≈ 14.4 GB**. Nodes hosting all three profiles need ≥ 16 GB RAM in every tier.
+
+| Node | Dev/CI | Phase 1 (500–2k rides/d) | Phase 2 (5–10k) | Scale (10–25k) |
+|---|---|---|---|---|
+| **OSRM Primary (3 profiles)** | 4 vCPU / 16 GB / 100 GB NVMe | **8 vCPU / 32 GB** / 200 GB NVMe `[ESTIMATE]` | 16 vCPU / 32 GB / 200 GB | 16 vCPU / 32 GB / 200 GB |
+| **OSRM Hot-Standby** | 2 vCPU / 8 GB | 4 vCPU / 16 GB | 8 vCPU / 32 GB | 8 vCPU / 32 GB |
+| **MeiliSearch (+ replica from Phase 2)** | 2 vCPU / 4 GB | 2 vCPU / 8 GB / 50 GB | 4 vCPU / 8 GB ×2 | 8 vCPU / 16 GB ×2 |
+| **PostgreSQL/PostGIS (primary + streaming replica from Phase 2)** | 4 vCPU / 16 GB / 100 GB | 4 vCPU / 16 GB / 250 GB | 8 vCPU / 32 GB / 500 GB ×2 | 8 vCPU / 32 GB / 1 TB ×2 |
+| **Redis (HA/sentinel from Phase 2)** | 1 vCPU / 2 GB | 2 vCPU / 4 GB | 2 vCPU / 4 GB ×2 | 4 vCPU / 8 GB ×2 |
+| **Network (per node)** | 1 Gbps `[ESTIMATE]` | 1 Gbps | 2 Gbps | 2 Gbps+; CDN absorbs tiles (Stage 006) |
+
+Rationale: Phase-1 OSRM raised to 32 GB because 8–16 GB cannot hold 3 graphs + reload headroom (F-016-1). Splitting profiles across nodes is the alternative at Scale tier.
 
 ---
 
-## 4. Hardware Sizing & Provisioning Matrix
+## 3. Topology (F-016-2)
 
-| Component | Launch (Tier 1: 500/day) | Growth (Tier 2: 2k/day) | Scale (Tier 3: 10k/day) | Mature (Tier 4: 25k/day) | Recommended Cloud Spec |
-|---|---|---|---|---|---|
-| **OSRM Primary Node** | 4 vCPU / 8 GB RAM | 4 vCPU / 8 GB RAM | 8 vCPU / 16 GB RAM | 8 vCPU / 16 GB RAM | Dedicated VPS (Compute-Optimized) |
-| **OSRM Standby Node** | 2 vCPU / 4 GB RAM | 4 vCPU / 8 GB RAM | 4 vCPU / 8 GB RAM | 8 vCPU / 16 GB RAM | Dedicated VPS (Hot Standby) |
-| **MeiliSearch Node** | 2 vCPU / 4 GB RAM | 2 vCPU / 4 GB RAM | 4 vCPU / 8 GB RAM | 4 vCPU / 8 GB RAM | General Purpose VPS |
-| **PostgreSQL / PostGIS** | 4 vCPU / 16 GB RAM | 4 vCPU / 16 GB RAM | 8 vCPU / 32 GB RAM | 8 vCPU / 32 GB RAM | High-Memory NVMe Storage VPS |
-| **Redis State Cluster** | 1 vCPU / 2 GB RAM | 2 vCPU / 4 GB RAM | 2 vCPU / 4 GB RAM | 4 vCPU / 8 GB RAM | Managed Redis / Cluster VPS |
-| **Cloudflare R2 Bucket** | ~$0.15 / month | ~$0.60 / month | ~$3.00 / month | ~$7.50 / month | Zero Egress CDN Storage |
-
----
-
-## 5. Multi-Profile OSRM Deployment & Shared-Memory Hot Reload
-
-### 5.1 Docker Compose Deployment Configuration
-```yaml
-# deploy/docker-compose.osrm.yml
-version: '3.8'
-
-services:
-  osrm-gateway:
-    image: nginx:1.25-alpine
-    container_name: osrm-gateway
-    restart: always
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./nginx/osrm-gateway.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - osrm-car
-      - osrm-bike
-      - osrm-cng
-
-  osrm-car:
-    image: osrm/osrm-backend:v5.27.1
-    container_name: osrm-car
-    restart: always
-    ipc: host
-    command: osrm-routed --algorithm mld --shared-memory=yes --port 5001
-    ports:
-      - "5001:5001"
-
-  osrm-bike:
-    image: osrm/osrm-backend:v5.27.1
-    container_name: osrm-bike
-    restart: always
-    ipc: host
-    command: osrm-routed --algorithm mld --shared-memory=yes --port 5002
-    ports:
-      - "5002:5002"
-
-  osrm-cng:
-    image: osrm/osrm-backend:v5.27.1
-    container_name: osrm-cng
-    restart: always
-    ipc: host
-    command: osrm-routed --algorithm mld --shared-memory=yes --port 5003
-    ports:
-      - "5003:5003"
+```
+                 [ Cloudflare CDN — tiles/glyphs (Stage 006) ]
+[ Clients ] ──► [ LB / NGINX ] ──► OSRM PRIMARY (car:5001, bike:5002, cng:5003)
+                     │        └──► OSRM HOT-STANDBY (same profiles; §6 failover)
+                     ├─► MeiliSearch primary ──async replica──► MeiliSearch replica
+                     ├─► PostgreSQL primary ──streaming replication──► replica (reads)
+                     └─► Redis (sentinel/managed HA)
 ```
 
-### 5.2 Zero-Downtime Live Graph Reload (`scripts/hot-reload-osrm.sh`)
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Hot-reloads contracted OSM graph into shared memory without restarting containers
-DATA_DIR="/opt/dpmaps/data/graphs"
-NEW_PBF="${DATA_DIR}/bangladesh-latest.osm.pbf"
-
-echo "[dpMaps SRE] Initiating MLD pipeline on new graph..."
-docker run --rm -v "${DATA_DIR}:/data" osrm/osrm-backend:v5.27.1 osrm-extract -p /data/profiles/car.lua /data/bangladesh-latest.osm.pbf
-docker run --rm -v "${DATA_DIR}:/data" osrm/osrm-backend:v5.27.1 osrm-partition /data/bangladesh-latest.osrm
-docker run --rm -v "${DATA_DIR}:/data" osrm/osrm-backend:v5.27.1 osrm-customize /data/bangladesh-latest.osrm
-
-echo "[dpMaps SRE] Loading new graph into IPC shared memory segment..."
-docker run --rm --ipc=host -v "${DATA_DIR}:/data" osrm/osrm-backend:v5.27.1 osrm-datastore /data/bangladesh-latest.osrm
-
-echo "[dpMaps SRE] Signaling live osrm-routed containers to switch memory pointers..."
-docker kill --signal=HUP osrm-car osrm-bike osrm-cng
-
-echo "[dpMaps SRE] Live graph reload completed successfully with zero dropped requests!"
-```
+- **Failover semantics (F-016-2):** NGINX upstream with `max_fails` + passive health; target cutover **< 300 ms** `[ESTIMATE]` aligned to the canonical 300 ms OSRM budget (004/005); Stage 004 circuit breaker (3-strike, `/healthz` poll) is the service-level complement. On primary failure: standby promoted, `osrm-datastore` re-pointed.
+- **PostgreSQL:** synchronous_commit on primary; replica serves analytics/eval reads (gate scorecards); failover manual-or-patroni `[UNVERIFIED tooling]`.
+- **MeiliSearch:** async replica from Phase 2; dual indexes (`first_party_pois`/`osm_pois`) replicated together (008 isolation preserved).
 
 ---
 
-## 6. High Availability & Automated Failover Runbook
+## 4. OSRM Deployment & Hot Reload (kept from Rev 2.0 §5)
 
-### 6.1 NGINX Upstream Configuration with Hot Standby
-```nginx
-# /etc/nginx/conf.d/osrm_upstream.conf
-upstream osrm_car_backend {
-    server osrm-primary.internal:5001 max_fails=2 fail_timeout=2s;
-    server osrm-standby.internal:5001 backup;
-}
-
-upstream osrm_bike_backend {
-    server osrm-primary.internal:5002 max_fails=2 fail_timeout=2s;
-    server osrm-standby.internal:5002 backup;
-}
-
-upstream osrm_cng_backend {
-    server osrm-primary.internal:5003 max_fails=2 fail_timeout=2s;
-    server osrm-standby.internal:5003 backup;
-}
-
-server {
-    listen 5000;
-    
-    location /route/v1/car/ {
-        proxy_pass http://osrm_car_backend/route/v1/driving/;
-        proxy_connect_timeout 150ms;
-        proxy_read_timeout 300ms;
-    }
-
-    location /route/v1/bike/ {
-        proxy_pass http://osrm_bike_backend/route/v1/driving/;
-        proxy_connect_timeout 150ms;
-        proxy_read_timeout 300ms;
-    }
-
-    location /route/v1/cng/ {
-        proxy_pass http://osrm_cng_backend/route/v1/driving/;
-        proxy_connect_timeout 150ms;
-        proxy_read_timeout 300ms;
-    }
-}
-```
-
-### 6.2 Failover Mechanics & SLA Verification
-1. **Health Polling:** NGINX edge gateway continuously probes `osrm-primary` every 1000ms.
-2. **Failure Detection:** If `osrm-primary` returns 2 consecutive connection failures or timeouts (>150ms):
-   - NGINX routes incoming dispatches to `osrm-standby` within **<300ms**.
-   - Standby node is active and pre-loaded in memory, eliminating cold-start latency.
-3. **Automated Recovery:** Docker restart policy restarts failed primary containers automatically. Once healthy, traffic seamlessly returns to primary.
+Docker Compose per-profile with `--shared-memory=yes`, `osrm-datastore` reload flow (004 §4.2), and Blue/Green fallback (004 §4.3). Reload script re-contracts only the TOD speed layer (`osrm-customize`) at bucket boundaries; full rebuilds are Runbook D.
 
 ---
 
-## 7. Standardized SRE Incident Runbooks
+## 5. Runbooks (F-016-3)
 
-### Runbook 1: Routing Query Latency Degradation (p95 > 15ms)
-- **Symptoms:** Alertmanager fires `OSRMHighLatency`; dispatch quotes experience latency spikes.
-- **Diagnostic Steps:**
-  1. Inspect container CPU utilization: `docker stats osrm-car osrm-bike osrm-cng`.
-  2. Verify IPC lock contention in shared memory: `ipcs -m`.
-  3. Inspect NGINX upstream error log: `tail -f /var/log/nginx/error.log | grep upstream_timed_out`.
-- **Resolution:**
-  - If CPU saturated, scale read replicas or toggle temporary mode back to Primary with Fallback.
-  - If memory thrashing detected, run `scripts/hot-reload-osrm.sh` to refresh memory segments.
+### Runbook A — OSRM crash/timeout failover (< 5 min MTTR `[ESTIMATE]`)
+1. Alert: `osrm_up` probe fails or p95 > 300 ms budget for 2 min. 2. NGINX marks primary down (passive failover, < 300 ms cutover `[ESTIMATE]`); standby serves all 3 profiles. 3. If standby also fails → Stage 005 waterfall absorbs (Barikoi → Google-capped → Haversine × 1.3); dispatch continues. 4. Restart primary container, `osrm-datastore` reload, health check, fail back (or keep standby primary until Runbook D). 5. Post-incident: capture graph version + metrics.
 
-### Runbook 2: Emergency Location Takedown (<60s Execution)
-- **Symptoms:** High-priority privacy complaint, court order, or compromised landmark requiring instant removal.
-- **Resolution:**
-  ```bash
-  # Execute emergency CLI takedown
-  npm run dpmaps:takedown -- --poi-id 8f4e2b10-6c9a-412d-98e3-0c1a9f0e4b88 \
-    --reason court_order --admin-user admin-ops-01
-  ```
-  - Verifies key added to Redis `dpmaps:suppression:active_place_ids` (<5ms).
-  - Deletes document from MeiliSearch (`meilisearch.deleteDocument`) (<100ms).
-  - Purges Cloudflare tile cache tag: `curl -X POST .../purge_cache -d '{"tags":["tile-z14-123-456"]}'` (<30s).
+### Runbook B — Emergency landmark takedown (Tier 1 **< 1 h SLA**, engineering target < 60 s `[ESTIMATE]`)
+1. Trigger: Stage 011 auto-hide threshold (3 qualified travelers) or admin/counsel order. 2. Redis Set `dpmaps:suppression:active_place_ids` add (< 5 ms). 3. Meili purge **both** `first_party_pois` + `osm_pois` (008 names). 4. `dpmaps.suppressions` row (Stage 003 §4.5 columns; `reported_at` SLA clock; `suppression_target_sla='1_hour'`). 5. **Cloudflare Purge by Tag `fp-poi`** (006 §6.3, < 30 s) + client-side filter. 6. `public_pois.lifecycle_status='suppressed'` + `provenance_events('takedown')`. 7. SLA verified `applied_at - reported_at < 1 h`; Tier 2 manual review < 4 h (011 §7).
 
-### Runbook 3: One-Step Monthly Release Rollback (<5 min Execution)
-- **Symptoms:** Alertmanager fires `SearchAccuracyRegression` or `HighCancellationRate` following a new monthly release.
-- **Resolution:**
-  ```bash
-  npm run dpmaps:release -- --rollback-to pub-2026-10-01 --reason "Regression in Old Dhaka autocomplete"
-  ```
-  1. Database switches active manifest pointer in `dpmaps.releases`.
-  2. MeiliSearch re-points index alias to the previous release snapshot.
-  3. Redis suppression set is **preserved** to prevent resurrecting deleted locations.
-  4. Vector tile cache tag purged on Cloudflare CDN.
+### Runbook C — Immediate mode rollback (primary → shadow → off)
+1. Trigger: gate breach, sev-1, or rehearsal abort (015 §5). 2. `system_config`: `routing_provider_mode`/`search_provider_mode` → `1: shadow` (sub-second hot reload, 005 §2); vendor serves live again. 3. If the incident is vendor-related/legal → `0: off` (bypass dpMaps entirely; Barikoi → Google → Haversine). 4. Verify: zero OSRM calls in `off`, shadow benchmarking resumes in `shadow`. 5. The Redis suppression set is **never** cleared by rollback (011 §7.2).
+
+### Runbook D — Geofabrik graph re-ingestion + MLD build (monthly default `[ESTIMATE]; configurable — Stage 004 alerts at 2× rebuild interval]`)
+1. Fetch `bangladesh-latest.osm.pbf`; verify size (~339 MB `[VERIFIED baseline]`). 2. `osrm-extract/partition/customize` per profile (004 §3.1) on the build node. 3. Blue/Green swap with synthetic probe (004 §4.3); zero dropped queries. 4. Optional Planetiler tile rebuild + versioned `bangladesh-<hash>.pmtiles` pointer swap (006). 5. Run Stage 007 geometry audit subset (004 §7) + Stage 015 routing golden replay before declaring done. 6. Record build hash in the release manifest (009 §11).
 
 ---
 
-## 8. Prometheus Metrics & Alertmanager Rules
+## 6. Monitoring & Clean-Room Posture (F-016-4)
 
-```yaml
-# /etc/prometheus/alert_rules.dpmaps.yml
-groups:
-  - name: dpmaps_infrastructure_alerts
-    rules:
-      - alert: OSRMHighLatency
-        expr: histogram_quantile(0.95, sum(rate(dpmaps_osrm_request_duration_seconds_bucket[5m])) by (le)) > 0.015
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "OSRM p95 latency exceeded 15ms SLA"
-
-      - alert: OSRMPrimaryNodeDown
-        expr: up{job="osrm-primary"} == 0
-        for: 30s
-        labels:
-          severity: critical
-        annotations:
-          summary: "Primary OSRM container offline; traffic diverted to standby"
-
-      - alert: MeiliSearchClusterDegraded
-        expr: rate(dpmaps_search_errors_total[2m]) > 0.01
-        for: 1m
-        labels:
-          severity: warning
-        annotations:
-          summary: "MeiliSearch error rate > 1%; checking Redis fallback"
-
-      - alert: HighVendorFallbackRate
-        expr: (sum(rate(dpmaps_search_requests_total{source="vendor_fallback"}[5m])) / sum(rate(dpmaps_search_requests_total[5m]))) > 0.15
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Vendor fallback rate > 15% in Primary mode; audit local coverage"
-```
+Prometheus/Alertmanager: QPS, p95 latency per provider, RSS, fallback rates (`dpmaps_routing_fallback_total`), gate gauges (005 §6.1), suppression SLA timers, replica lag. **Egress control:** all vendor egress flows through `vendorClientWrapper` with egress logging (Stage 002); network policy denies direct vendor endpoints from workers (clean-room firewall).
 
 ---
 
-## 9. Deliverables & Definition of Done
+## 7. Deliverables
 
-- [ ] **Infrastructure Provisioning:** Dedicated production and standby VPS provisioned with Docker Compose orchestration.
-- [ ] **NGINX Multi-Profile Gateway:** Gateway active on Port 5000 routing Car (5001), Bike (5002), and CNG (5003).
-- [ ] **Automated Standby Failover:** Hot failover tested and verified with $<300\text{ms}$ cutover latency on container termination.
-- [ ] **Shared-Memory Hot Reload:** `scripts/hot-reload-osrm.sh` deployed and benchmarked on 339 MB PBF, proving zero dropped dispatches.
-- [ ] **Monitoring & Dashboards:** Prometheus Alertmanager rules and Grafana dashboards tracking QPS, p95 latencies, RAM RSS, and fallback rates.
-- [ ] **Emergency Runbooks Tested:** Verified sub-60s emergency takedown and one-step release rollback in staging.
+- [ ] Sizing matrix provisioned per tier; Phase-1 OSRM ≥ 32 GB verified against real-graph RSS (F-016-1).
+- [ ] Meili replica + PG streaming replication deployed from Phase 2 (F-016-2).
+- [ ] Failover drill: kill primary container → < 300 ms cutover `[ESTIMATE]` measured (F-016-2).
+- [ ] Runbooks A–D in `docs/orchestration/` runbook set, each drill-tested; Runbook B end-to-end with a real suppression (Stage 011 + 006 purge tags) (F-016-3).
+- [ ] Egress policy + wrapper logging verified (F-016-4).
+- [ ] All `[ESTIMATE]` figures replaced by measurements after Phase 1 soak.
+
+---
+
+## 8. Revision Changelog
+
+| Revision | Date | Author / Context | Summary |
+|---|---|---|---|
+| Rev 2.0 | 2026-10-22 | Orchestrator (audited baseline) | Topology, sizing matrix, hot reload, failover, 3 runbooks, Prometheus. |
+| Rev 2.1 | 2026-10-22 | Lead Planning & Systems Architecture (batch-4 audit) | **Sizing Physics, HA & Runbook Completion:** 1. Sizing matched to Stage 004 RSS (Phase-1 OSRM 32 GB; blue/green headroom) + network bandwidth rows (F-016-1). 2. Meili replica + PG streaming replication + failover semantics aligned to the 300 ms budget (F-016-2). 3. Runbooks A–D completed per work order (crash failover; takedown with < 1 h SLA + dual-index purge + `fp-poi` tag; mode rollback primary→shadow→off; Geofabrik re-ingestion with configurable cadence) (F-016-3). 4. Clean-room egress posture (F-016-4). |

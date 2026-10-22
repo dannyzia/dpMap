@@ -856,6 +856,40 @@ GRANT SELECT, INSERT ON dpmaps.post_trip_labels TO ride_dispatch;
 GRANT SELECT ON dpmaps.post_trip_labels TO dpmaps_analyst;
 ```
 
+### 4.12 Invalidation Vocabulary, OSM Road Names & Saved-Place Identity (Rev 2.6 — batch-4 adoption, additive only)
+
+Consumers: Stage 012 (`driver_bias` invalidation reason), Stage 013 (reverse-geocode Tier 2 roads), Stage 014 (sovereign saved-place identity & confirmation state).
+
+```sql
+-- 1. Invalidation vocabulary widening (F-012-1): add 'driver_bias'
+ALTER TABLE dpmaps.ledger_invalidations DROP CONSTRAINT ledger_invalidations_reason_check;
+ALTER TABLE dpmaps.ledger_invalidations ADD CONSTRAINT ledger_invalidations_reason_check
+  CHECK (reason IN ('fraud_sybil','burst_suppression','collusion','audit_purge','quarantine','driver_bias'));
+
+-- 2. OSM road names for reverse geocoder Tier 2 (F-013-2) — isolated ODbL layer
+CREATE TABLE dpmaps.osm_road_names (
+  way_id BIGINT NOT NULL,
+  name VARCHAR(255),
+  name_bn VARCHAR(255),
+  highway_class VARCHAR(32) NOT NULL,
+  geom GEOMETRY(LineString, 4326) NOT NULL,
+  snapshot_date DATE NOT NULL,
+  PRIMARY KEY (way_id, snapshot_date)
+);
+CREATE INDEX idx_osm_road_names_geom ON dpmaps.osm_road_names USING GIST (geom);
+GRANT SELECT ON dpmaps.osm_road_names TO dpmaps_worker;
+GRANT SELECT ON dpmaps.osm_road_names TO dpmaps_analyst;
+
+-- 3. Saved-places sovereign identity & confirmation state (F-014-2/4; public schema,
+--    mirrors Rev 2.4 item-0 precedent for operational stubs)
+ALTER TABLE public.user_private_places
+  ADD COLUMN IF NOT EXISTS sovereign_place_id UUID NOT NULL DEFAULT gen_random_uuid(),
+  ADD COLUMN IF NOT EXISTS needs_confirmation BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS resolution_spread_meters NUMERIC(8,2);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_private_places_sovereign
+  ON public.user_private_places (sovereign_place_id);
+```
+
 ---
 
 ## 5. 135-Day Window Key Schedule & Deduplication Architecture
@@ -1153,6 +1187,7 @@ Stage 003 mandates the following automated test verifications prior to Phase 1 d
 | Rev 2.3 | 2026-10-22 | Lead Planning & Systems Architecture (audit 004-005; X-2 adoption) | **TOD Speed Pipeline & Vendor Provenance Schema (additive only):**<br>1. Added `dpmaps.segment_speeds_tod`, `dpmaps.h3_edge_speeds_tod`, `dpmaps.eta_tod_corrections` (§4.9): first-party TOD speed aggregates and learned ETA correction factors consumed by Stage 004 §6; keyed by ODbL-derived OSM node identifiers / H3 cells; no vendor data.<br>2. Added `vendor_provider` to `public.ride_vendor_data` (§4.8): operational provenance enum (`barikoi`/`google`) enabling the Gate 1 Barikoi-only vendor-parity statistic (concept paper §14.3).<br>3. Grants: `dpmaps_worker` read/write on the three §4.9 tables; `dpmaps_analyst` read. Existing Rev 2.2 constraints, views, and retention rules unchanged. |
 | Rev 2.4 | 2026-10-22 | Lead Planning & Systems Architecture (batch-2 audit; X-1 adoption) | **Takedown, Challenger & Search-Feed Objects (additive only):** 0. `public.orders.user_id` stub completion (traveler-qualifier rider key). 1. `dpmaps.takedown_reports` (traveler-qualified reporting, SLA timestamps without defaults). 2. `dpmaps.provisional_challengers` (two-cycle challenger tracking with k=1 cell-set snapshot). 3. `query_clusters.published_poi_id` incumbent pointer. 4. `v_search_feed_first_party` / `v_search_feed_osm` views feeding the physically isolated MeiliSearch indexes (Stage 008); first-party view aggregates phonetic keys per POI — exactly one row per POI by invariant. Grants staged. Rev 2.2/2.3 content unchanged. |
 | Rev 2.5 | 2026-10-22 | Lead Planning & Systems Architecture (batch-3 audit) | **Post-Trip Staging & Bilingual Gate (additive only):** 1. `dpmaps.post_trip_labels` staging table (cycle-bounded uniqueness; scrubbed writes). 2. `chk_poi_bilingual_active` — both names required at `lifecycle_status='active'`. Grants staged. Rev 2.2–2.4 content unchanged. |
+| Rev 2.6 | 2026-10-22 | Lead Planning & Systems Architecture (batch-4 audit) | **Invalidation Vocabulary, OSM Road Names & Saved-Place Identity (additive only):** 1. `ledger_invalidations.reason` CHECK widened with `'driver_bias'`. 2. `dpmaps.osm_road_names` (ODbL layer for Stage 013 Tier 2). 3. `public.user_private_places` gains `sovereign_place_id` (UUID, unique), `needs_confirmation`, `resolution_spread_meters`. Rev 2.2–2.5 content unchanged. |
 
 
 
