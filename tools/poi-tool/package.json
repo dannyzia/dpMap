@@ -4,7 +4,8 @@
   "description": "Field surveyor tool for pinning clean-room landmarks on the dpMaps platform",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node audit_test.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",

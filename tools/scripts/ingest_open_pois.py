@@ -252,6 +252,13 @@ def run_pipeline(sqlite_path, pg_conn_str=None):
     return deduped
 
 if __name__ == '__main__':
-    import sys
-    db_conn = sys.argv[1] if len(sys.argv) > 1 else None
-    run_pipeline("docs/resources/bangladesh.poi", db_conn)
+    import argparse
+    parser = argparse.ArgumentParser(description="Ingest Open POIs into PostGIS")
+    parser.add_argument("--poi-file", default="docs/resources/bangladesh.poi", help="Path to SQLite .poi file")
+    parser.add_argument("--pg-conn", default=None, help="PostgreSQL connection string")
+    parser.add_argument("--dry-run", action="store_true", help="Perform dry run without connecting to DB")
+    parser.add_argument("db_conn_pos", nargs="?", default=None, help="Optional positional connection string")
+    args = parser.parse_args()
+    conn_str = None if args.dry_run else (args.pg_conn or args.db_conn_pos)
+    run_pipeline(args.poi_file, conn_str)
+

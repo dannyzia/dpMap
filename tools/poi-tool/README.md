@@ -11,7 +11,8 @@ Field-surveyor tool for pinning clean-room landmarks on the dpMaps platform.
 ```
 cd tools\poi-tool
 npm install
-edit start.bat  ← set ADMIN_PASSWORD (and, if needed, CONTRIBUTOR_KEY)
+npm test          ← automated verification (25 assertions, in-memory DB)
+edit start.bat    ← set ADMIN_PASSWORD (and, if needed, CONTRIBUTOR_KEY)
 start.bat
 ```
 
@@ -90,8 +91,10 @@ OSM-derived POIs live in `dpmaps.osm_pois` and are exported separately from the 
 - `parent_venue` dropdown currently lists approved building/area pins; true venue
   hierarchy (`parent_venue` table) is a later stage.
 
-## Replacing the stale resources ZIP
+## Distributable resources ZIP
 
-The ZIP under `docs/resources/dpmaps-poi-tool.zip` is the v1 baseline. After building v2
-you should regenerate that archive from `tools/poi-tool/` so the resource copy matches the
-built tool. Until then, treat the resources ZIP as the stale artifact it is.
+The archive under `docs/resources/dpmaps-poi-tool.zip` is the v2 distributable package with root folder `poi-tool/`.
+To update the archive after changes:
+```bash
+cd tools && zip -r ../docs/resources/dpmaps-poi-tool.zip poi-tool/ -x "poi-tool/node_modules/*" "poi-tool/*.db*" "poi-tool/*.log"
+```
