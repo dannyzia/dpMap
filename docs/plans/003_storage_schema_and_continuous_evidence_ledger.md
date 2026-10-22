@@ -823,6 +823,39 @@ GRANT SELECT ON dpmaps.takedown_reports, dpmaps.provisional_challengers TO dpmap
 GRANT SELECT ON dpmaps.v_search_feed_first_party, dpmaps.v_search_feed_osm TO dpmaps_worker;
 ```
 
+### 4.11 Post-Trip Label Staging & Bilingual Publication Gate (Rev 2.5 — batch-3 adoption, additive only)
+
+Consumers: Stage 010 (post-trip label staging with cycle-bounded uniqueness; bilingual requirement at publication time). Candidates remain single-script; `active` requires both names.
+
+```sql
+-- 1. Post-trip label staging (Stage 010 §4)
+CREATE TABLE dpmaps.post_trip_labels (
+  id BIGSERIAL PRIMARY KEY,
+  poi_id UUID REFERENCES dpmaps.public_pois(id) ON DELETE CASCADE,
+  h3_res10 VARCHAR(15) NOT NULL,
+  submitted_text VARCHAR(120) NOT NULL,
+  normalized_text VARCHAR(120) NOT NULL,
+  submission_type VARCHAR(16) NOT NULL CHECK (submission_type IN ('text_entry', 'chip_selection')),
+  pseudonym_hash CHAR(64) NOT NULL,
+  trip_hash CHAR(64) NOT NULL,
+  publication_cycle VARCHAR(32) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_rider_poi_cycle UNIQUE (poi_id, pseudonym_hash, publication_cycle)
+);
+CREATE INDEX idx_post_trip_labels_poi ON dpmaps.post_trip_labels (poi_id);
+CREATE INDEX idx_post_trip_labels_h3 ON dpmaps.post_trip_labels (h3_res10);
+
+-- 2. Bilingual publication gate (Stage 010 §3.1) — candidates stay single-script
+ALTER TABLE dpmaps.public_pois
+  ADD CONSTRAINT chk_poi_bilingual_active
+  CHECK (lifecycle_status <> 'active'
+         OR (canonical_name IS NOT NULL AND bangla_name IS NOT NULL));
+
+-- Grants (staged roles)
+GRANT SELECT, INSERT ON dpmaps.post_trip_labels TO ride_dispatch;
+GRANT SELECT ON dpmaps.post_trip_labels TO dpmaps_analyst;
+```
+
 ---
 
 ## 5. 135-Day Window Key Schedule & Deduplication Architecture
@@ -1119,6 +1152,7 @@ Stage 003 mandates the following automated test verifications prior to Phase 1 d
 | Rev 2.2 | 2026-10-22 | Orchestrator (per Postgres 16 Audit Verification) | **Strict DDL Verification, Aggregation Overcounting Fix & Category Canonicalization:**<br>1. **View 5× Overcounting Elimination (§4.1, §6.3):** Added `dpmaps.active_dedup_key` single-row table containing the active 90-day oldest qualifying key. Joined `dpmaps.v_active_cluster_evidence` on `lp.key_id = adk.key_id`, eliminating 5× weight and vote inflation caused by multi-key pseudonym fan-out.<br>2. **Procedure Call & Retention Syntax (§6.4):** Corrected `SELECT partman.run_maintenance_proc()` to procedure call `CALL partman.run_maintenance_proc()` (mandatory in `pg_partman 5.x`). Added 90-day retention prune for `dpmaps.ledger_invalidations`. Added materialized view `dpmaps.mv_cluster_evidence_stats`.<br>3. **Category Canonicalization (§4.2):** Consolidated POI categories from 37 into 26 disjoint canonical categories (e.g. `fuel`, `airport`, `worship`; removing overlapping synonyms `food`, `station`, `mall`). Added `dpmaps.category_synonym_mappings` lookup table.<br>4. **Index Immutability Fix (§4.5):** Dropped mutable `NOW()` function from `idx_suppressions_active` predicate (`CREATE INDEX idx_suppressions_active ON dpmaps.suppressions (applied_at, expires_at)`). Removed `DEFAULT NOW()` from `reported_at` to enable true SLA duration measurement.<br>5. **Ledger Idempotency & Ingestion Timestamp (§4.4):** Enforced deterministic trip completion time (`created_at TIMESTAMPTZ NOT NULL` without `DEFAULT NOW()`), key-independent `trip_hash` token (`HMAC-SHA256(trip_id, IngestionSalt)`), and unique constraint `CONSTRAINT uq_ledger_trip UNIQUE (trip_hash, created_at)` for `ON CONFLICT DO NOTHING` idempotency.<br>6. **Migration Execution Sequence (§3.1):** Documented 4-phase execution sequence and added operational table prerequisite stubs (`public.orders`, `public.ride_receipts`, `public.ride_vendor_data`) for standalone deployment.<br>7. **Foreign Key Immutability (§4.3) & Composite OSM PK (§4.8):** Enforced `ON DELETE RESTRICT` on `poi_versions` and `release_pois`. Changed `osm_pois` primary key to composite `(osm_type, osm_id, snapshot_date)`. Fixed `admin_boundaries` defaults and `chk_search_eval_vendor_null`. |
 | Rev 2.3 | 2026-10-22 | Lead Planning & Systems Architecture (audit 004-005; X-2 adoption) | **TOD Speed Pipeline & Vendor Provenance Schema (additive only):**<br>1. Added `dpmaps.segment_speeds_tod`, `dpmaps.h3_edge_speeds_tod`, `dpmaps.eta_tod_corrections` (§4.9): first-party TOD speed aggregates and learned ETA correction factors consumed by Stage 004 §6; keyed by ODbL-derived OSM node identifiers / H3 cells; no vendor data.<br>2. Added `vendor_provider` to `public.ride_vendor_data` (§4.8): operational provenance enum (`barikoi`/`google`) enabling the Gate 1 Barikoi-only vendor-parity statistic (concept paper §14.3).<br>3. Grants: `dpmaps_worker` read/write on the three §4.9 tables; `dpmaps_analyst` read. Existing Rev 2.2 constraints, views, and retention rules unchanged. |
 | Rev 2.4 | 2026-10-22 | Lead Planning & Systems Architecture (batch-2 audit; X-1 adoption) | **Takedown, Challenger & Search-Feed Objects (additive only):** 0. `public.orders.user_id` stub completion (traveler-qualifier rider key). 1. `dpmaps.takedown_reports` (traveler-qualified reporting, SLA timestamps without defaults). 2. `dpmaps.provisional_challengers` (two-cycle challenger tracking with k=1 cell-set snapshot). 3. `query_clusters.published_poi_id` incumbent pointer. 4. `v_search_feed_first_party` / `v_search_feed_osm` views feeding the physically isolated MeiliSearch indexes (Stage 008); first-party view aggregates phonetic keys per POI — exactly one row per POI by invariant. Grants staged. Rev 2.2/2.3 content unchanged. |
+| Rev 2.5 | 2026-10-22 | Lead Planning & Systems Architecture (batch-3 audit) | **Post-Trip Staging & Bilingual Gate (additive only):** 1. `dpmaps.post_trip_labels` staging table (cycle-bounded uniqueness; scrubbed writes). 2. `chk_poi_bilingual_active` — both names required at `lifecycle_status='active'`. Grants staged. Rev 2.2–2.4 content unchanged. |
 
 
 

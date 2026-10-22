@@ -128,20 +128,25 @@ The admin decides when to switch. Month 3 to 4 is a target, not a rule. Gates ar
 | 000 TOC | Done | |
 | 001 Phase 0 seeding and data assets | partiallydone | Rev 2.2 applied per owner. Rev 2.1 verified by running the ingestion script on the real file (49,881 rows). |
 | 002 Provenance firewall and legal | NotDone | Rev 2.1 verified. Rev 2.2 patch (fuzz-test scoping, egress logging, hash coverage, phone regex, `GETDEL`, receipts, quarantine, legal gate) applied per owner, not re-read. |
-| 003 Storage schema and evidence ledger | NotDone | Rev 2.4 applied per Stage 004/005 and 008/009/011 audit adoptions (additive: segment_speeds_tod, h3_edge_speeds_tod, eta_tod_corrections in §4.9; vendor_provider in ride_vendor_data in §4.8; takedown_reports, provisional_challengers, query_clusters.published_poi_id, dual search feed views, orders.user_id in §4.10; Rev 2.2 core verified). |
+| 003 Storage schema and evidence ledger | NotDone | Rev 2.5 applied per Stage 004/005, 008/009/011, and 006/007/010 audit adoptions (additive: segment_speeds_tod, h3_edge_speeds_tod, eta_tod_corrections in §4.9; vendor_provider in ride_vendor_data in §4.8; takedown_reports, provisional_challengers, query_clusters.published_poi_id, dual search feed views, orders.user_id in §4.10; post_trip_labels, chk_poi_bilingual_active in §4.11; Rev 2.2 core verified). |
 | 004 OSRM routing engine and dynamic traffic | NotDone | Rev 2.1 applied per audit (TOD-learned speed pipeline with segment_speeds_tod, multiplicative correction k(v,b), per-edge map-matching, 300ms timeout, relative ETA cutover gates ≤ 12% median / ≤ 25% p95, car/bike/cng profiles). |
 | 005 Dispatch router and shadow benchmarking | NotDone | Rev 2.1 applied per audit (first-class mode 0 off, clean-room Redis shadow payload without vendor quotes, correlation via trip_hash, Stage 003 §4.7 DDL alignment, 18 km/h Haversine fix, Gate 1 median & vendor-parity repair). |
+| 006 Vector tiles, PMTiles & Bengali glyphs | NotDone | Rev 2.1 applied per audit (Hard Rule 7 raster policy + CI test, labeled Planetiler sizing, R2 purge tags [Stage 011 Tier D], fontstack conformance, first_party.pmtiles overlay [Invariant 4], ODbL attribution footer). |
+| 007 Text normalization & alias clustering | NotDone | Rev 2.1 applied per audit (`scrubPii` contract cross-stage, ordered entity/direction locking, order-insensitive phonetic name tokens, schema-conformant alias promotion). |
 | 008 MeiliSearch engine and mixed autocomplete | NotDone | Rev 2.1 applied per audit (dual physical indexes first_party_pois/osm_pois with RAM-only merge, zero-hit vendor fallback, dest_session:* 15-min GETDEL handoff, popularity/bilingual ranking, selection-time telemetry). |
 | 009 Winner selection and Wilson confidence | NotDone | Rev 2.1 applied per audit (UUIDv4 identity, Gate 5 cell margin on v_active_cluster_evidence, proved Wilson threshold n_eff ≥ 25 at p=0.70 [rejecting work order's false ≥ 23 claim; DPM-D-012], k=1 ring aggregation, two-cycle demote-not-delete). |
+| 010 Naming engine & post-trip verification | NotDone | Rev 2.1 applied per audit (4-tier hierarchy, bilingual publication gate [chk_poi_bilingual_active], post_trip_labels staging [cycle-bounded], poi_versions lineage, unindexed-cluster seeding). |
 | 011 Privacy architecture and takedowns | NotDone | Rev 2.1 applied per audit (Redis Set/sliding-window suppression [no Bloom filter], traveler-qualified reporting [completed ride to cell in 90 d], dual-tier SLA <1h/<4h on Stage 003 columns, categorical residential privacy boundary). |
-| 006, 007, 010, 012 to 016 | NotDone | Not yet reviewed (Batch 3: 006, 007, 010 next). |
+| 012 to 016 | NotDone | Not yet reviewed (Batch 4: 012, 013, 014, 015, 016 next). |
 
-**Stage 003 status:** Rev 2.4 applied (Rev 2.2 core verified; Rev 2.3/2.4 additively adopt Stages 004/005 and 008/009/011 objects). Ready for implementation.
+**Stage 003 status:** Rev 2.5 applied (Rev 2.2 core verified; Rev 2.3–2.5 additively adopt Stages 004/005, 008/009/011, and 006/007/010 objects). Ready for implementation.
 
 **Open audit findings in pending stages:**
-- 006: verify Planetiler RAM/disk sizing, PMTiles hosting on R2, Noto Sans Bengali glyph pipeline.
-- 007: Unicode normalization, Bengali digit folding, hard digit/direction locking, phonetic key generation for Meili search feed.
-- 010: 4-tier naming authority hierarchy, canonical name synthesis from Stage 007 queries, post-trip UI verification.
+- 012: Sybil shields, burst suppression, collusion dampening, audit purge.
+- 013: Dhaka address parsing, reverse geocoding, perimeter gate snapping.
+- 014: Saved places migration, vendor place ID decoupling, user confirmation UX.
+- 015: Golden test suites, telemetry collectors, numeric cutover gates.
+- 016: Sizing model (500–25k/day), standby failover, HA, Prometheus, Docker runbooks.
 
 
 ---
