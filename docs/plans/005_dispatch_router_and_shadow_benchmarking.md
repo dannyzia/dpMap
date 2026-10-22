@@ -184,14 +184,14 @@ export async function calculateDispatchRoute(req: RouteRequest): Promise<ActiveR
     logger.warn({ tripId: req.tripId }, '[dispatchRouter] OSRM timeout/failure; Fallback 1 (Barikoi)');
     const barikoi = await executeBarikoiRoute(req.origin, destCoords, 400);
     if (barikoi && barikoi.status === 'OK') {
-      await persistVendorOperationalRecord(req.tripId, destCoords, barikoi);
+      await persistVendorOperationalRecord(req.tripId, destCoords, barikoi, 'barikoi');
       return toActiveRoute(barikoi, 'barikoi');
     }
 
     logger.error({ tripId: req.tripId }, '[dispatchRouter] Barikoi failed; Fallback 2 (Google)');
     const google = await executeGoogleRoute(req.origin, destCoords, 600);
     if (google && google.status === 'OK') {
-      await persistVendorOperationalRecord(req.tripId, destCoords, google);
+      await persistVendorOperationalRecord(req.tripId, destCoords, google, 'google');
       return toActiveRoute(google, 'google');
     }
 
@@ -204,12 +204,12 @@ export async function calculateDispatchRoute(req: RouteRequest): Promise<ActiveR
     let activeResult: ActiveRouteResult;
 
     if (liveVendor && liveVendor.status === 'OK') {
-      await persistVendorOperationalRecord(req.tripId, destCoords, liveVendor);
+      await persistVendorOperationalRecord(req.tripId, destCoords, liveVendor, 'barikoi');
       activeResult = toActiveRoute(liveVendor, 'barikoi');
     } else {
       const google = await executeGoogleRoute(req.origin, destCoords, 600);
       if (google && google.status === 'OK') {
-        await persistVendorOperationalRecord(req.tripId, destCoords, google);
+        await persistVendorOperationalRecord(req.tripId, destCoords, google, 'google');
         activeResult = toActiveRoute(google, 'google');
       } else {
         activeResult = getHaversineFallback(req.origin, destCoords);
@@ -232,13 +232,13 @@ export async function calculateDispatchRoute(req: RouteRequest): Promise<ActiveR
   // 5. Mode 0: Off — vendor only, ZERO dpMaps/OSRM involvement, no shadow overhead
   const vendorResult = await executeBarikoiRoute(req.origin, destCoords, 400);
   if (vendorResult && vendorResult.status === 'OK') {
-    await persistVendorOperationalRecord(req.tripId, destCoords, vendorResult);
+    await persistVendorOperationalRecord(req.tripId, destCoords, vendorResult, 'barikoi');
     return toActiveRoute(vendorResult, 'barikoi');
   }
 
   const google = await executeGoogleRoute(req.origin, destCoords, 600);
   if (google && google.status === 'OK') {
-    await persistVendorOperationalRecord(req.tripId, destCoords, google);
+    await persistVendorOperationalRecord(req.tripId, destCoords, google, 'google');
     return toActiveRoute(google, 'google');
   }
 
@@ -253,16 +253,20 @@ export async function calculateDispatchRoute(req: RouteRequest): Promise<ActiveR
 async function persistVendorOperationalRecord(
   tripId: string,
   dest: LatLng,
-  vendor: SafeVendorRouteResult
+  vendor: SafeVendorRouteResult,
+  provider: 'barikoi' | 'google'
 ): Promise<void> {
+  // vendor_provider: operational provenance enum (which vendor leg served the quote),
+  // not vendor-returned data; column adopted via Stage 003 Rev 2.3 patch (Part I; X-2 resolved).
   await db.query(
     `INSERT INTO public.ride_vendor_data
-      (ride_id, vendor_dest_lat, vendor_dest_lng, vendor_quoted_dist_m, vendor_quoted_dur_s)
-     VALUES ($1, $2, $3, $4, $5)
+      (ride_id, vendor_dest_lat, vendor_dest_lng, vendor_quoted_dist_m, vendor_quoted_dur_s, vendor_provider)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (ride_id) DO UPDATE
      SET vendor_quoted_dist_m = EXCLUDED.vendor_quoted_dist_m,
-         vendor_quoted_dur_s = EXCLUDED.vendor_quoted_dur_s`,
-    [tripId, dest.lat, dest.lng, vendor.distance_meters, vendor.duration_seconds]
+         vendor_quoted_dur_s = EXCLUDED.vendor_quoted_dur_s,
+         vendor_provider = EXCLUDED.vendor_provider`,
+    [tripId, dest.lat, dest.lng, vendor.distance_meters, vendor.duration_seconds, provider]
   );
 }
 
@@ -389,14 +393,20 @@ export async function onTripCompleted(event: TripCompletedEvent): Promise<void> 
   const quote = JSON.parse(rawQuote);
   if (event.elapsedSeconds <= 0 || event.drivenOdometerMeters <= 0) return;
 
-  // Vendor quote: read ONCE from Tier V, compute percentages, discard raw values
+  // Vendor quote: read ONCE from Tier V, compute percentages, discard raw values.
+  // vendor_provider is an operational provenance enum (which vendor leg served), not
+  // vendor-returned data; column adopted via Stage 003 Rev 2.3 patch (Part I; X-2 resolved). Gate 1 vendor parity
+  // is evaluated over vendor_provider = 'barikoi' rows only (concept paper §14.3:
+  // "matching or beating Barikoi's measured error"); Google-served fallback rows are
+  // excluded from the parity statistic and counted separately.
   const vendorRow = await db.query(
-    `SELECT vendor_quoted_dist_m, vendor_quoted_dur_s
+    `SELECT vendor_quoted_dist_m, vendor_quoted_dur_s, vendor_provider
        FROM public.ride_vendor_data WHERE ride_id = $1`,
     [event.tripId]
   );
   const vendorDistM = vendorRow.rows[0]?.vendor_quoted_dist_m ?? null;
   const vendorDurS = vendorRow.rows[0]?.vendor_quoted_dur_s ?? null;
+  const vendorProvider = vendorRow.rows[0]?.vendor_provider ?? null;
 
   const pct = (pred: number, actual: number) =>
     Number((Math.abs(pred - actual) / actual * 100).toFixed(2));
@@ -422,7 +432,7 @@ export async function onTripCompleted(event: TripCompletedEvent): Promise<void> 
      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       quote.vehicle_type,
-      resolveTodBucket(Date.now()),
+      resolveTodBucket(quote.dispatched_at), // dispatch-time bucket: the conditions being predicted
       quote.osrm_duration_s,
       quote.osrm_distance_m,
       event.elapsedSeconds,
@@ -454,7 +464,7 @@ function computeCorridorOverlapPct(
 ```
 
 ### 4.3 TOD Bucket Resolution
-Enumeration of record is the Stage 003 CHECK: `('morning_peak', 'evening_peak', 'off_peak', 'night')` (column `tod_bucket`; F-005-10, cross-plan note X-1). Boundaries are admin-configurable in `system_config` (Asia/Dhaka), defaults `[ESTIMATE]`: morning_peak 07:00–11:00, evening_peak 16:00–21:00, night 00:00–05:00, off_peak otherwise. Stage 004 §6.4 consumes the same boundaries.
+Enumeration of record is the Stage 003 CHECK: `('morning_peak', 'evening_peak', 'off_peak', 'night')` (column `tod_bucket`; F-005-10, cross-plan note X-1). Boundaries are admin-configurable in `system_config` (Asia/Dhaka), defaults `[ESTIMATE]`: morning_peak 07:00–11:00, evening_peak 16:00–21:00, night 00:00–05:00, off_peak otherwise. Stage 004 §6.4 consumes the same boundaries. The bucket is resolved from the **dispatch timestamp** of the quote (`quote.dispatched_at`) — the moment whose traffic conditions are being predicted — not from trip completion time, so a long trip crossing a boundary remains attributed to the quoted conditions.
 
 ### 4.4 Evaluation Formulas
 
@@ -515,9 +525,9 @@ To graduate from Mode 1 (Shadow) to Mode 2 (Primary), the routing engine must sa
 │ **ETA Accuracy (rel.)**  │ Median ETA error <= 12% of  │ p95 <= 25% of trip duration;  │
 │                          │ actual trip duration        │ NEVER flat minutes.           │
 ├──────────────────────────┼─────────────────────────────┼───────────────────────────────┤
-│ **Vendor Parity**        │ median(e_T^dpMaps) <=       │ Measured on the same trip     │
-│                          │ median(e_T^Barikoi)         │ sample ("matching or beating  │
-│                          │                             │ Barikoi's measured error").   │
+│ **Vendor Parity**        │ median(e_T^dpMaps) <=       │ Same trip sample, restricted  │
+│                          │ median(e_T^Barikoi)         │ to Barikoi-served rows only   │
+│                          │                             │ (Google legs counted apart).  │
 ├──────────────────────────┼─────────────────────────────┼───────────────────────────────┤
 │ **Corridor Overlap**     │ >= 85% overlap vs driven    │ 50 m buffer of OSRM geometry  │
 │                          │ trajectories                │ [ESTIMATE radius].            │
@@ -572,7 +582,7 @@ export const gate1DurationErrorGauge = new Gauge({
 
 export const vendorParityGauge = new Gauge({
   name: 'dpmaps_vendor_parity_error_gap_pct',
-  help: 'median(e_T dpMaps) minus median(e_T vendor) on the same trip sample; negative = beating vendor',
+  help: 'median(e_T dpMaps) minus median(e_T vendor) on the same trip sample, Barikoi-served rows only; negative = beating vendor',
   labelNames: ['vehicle_type']
 });
 
@@ -617,4 +627,4 @@ To prevent bill spikes during upstream vendor outages:
 | Revision | Date | Author / Context | Summary of Major Changes |
 |---|---|---|---|
 | Rev 2.0 | 2026-10-22 | Orchestrator (audited baseline) | Four-mode toggle, dispatch waterfall, `GETDEL` destination resolution, two-phase shadow benchmarking, Gate 1 tracking, Google circuit breaker. |
-| Rev 2.1 | 2026-10-22 | Lead Planning & Systems Architecture (audit 004-005) | **Clean-Room Calibration & Schema Repairs:**<br>1. **Schema contract (F-005-1):** Rewrote `groundTruthCalibrator.ts` to the exact Stage 003 §4.7 column list — dropped nonexistent `trip_id`, `vendor_duration_s`, `vendor_distance_m`; added required `vehicle_type`, `tod_bucket`, `vendor_duration_error_pct`, `vendor_distance_error_pct`, `corridor_overlap_pct`, `route_deviation_flag`.<br>2. **Clean-room benchmarking (F-005-2):** Removed raw vendor quotes from the Redis shadow payload; vendor quotes are read once from Tier V `public.ride_vendor_data`; only computed error percentages enter `dpmaps.routing_eval_events`.<br>3. **Correlation (F-005-3):** Shadow quotes keyed `shadow_quote:<trip_hash>` with `trip_hash = HMAC-SHA256(trip_id, IngestionSalt)` (Stage 003 §4.4); raw `trip_id` confined to 30-day-purge operational logs.<br>4. **Role boundary (F-005-4):** Calibrator runs as `ride_dispatch` with explicit grants; `dpmaps_worker` retains `REVOKE ALL` on vendor data.<br>5. **Gate 1 repair (F-005-5):** Median statistics; added vendor-parity clause and corridor overlap ≥ 85%; demoted availability to internal SLO `[ESTIMATE]`; removed invented "95% of trips" wording.<br>6. **Haversine bug (F-005-6):** Fixed duration factor from `/ 5000` to `/ 18000` (18 km/h baseline).<br>7. **Mode 0 & timeouts (F-005-7, F-005-8):** Explicit first-class `off` semantics (zero OSRM/shadow/harvest overhead); unified 300/400/600/0 ms budgets; invalid mode values fail safe to `off` with alert.<br>8. **Definitions (F-005-9 … F-005-12):** Vendor polyline pass-through-only contract; `tod_bucket` boundaries and 4-value enumeration of record; `corridor_overlap_pct` (50 m buffer of OSRM geometry only) and `route_deviation_flag`; Redis ≥ 6.2 `GETDEL` client note. |
+| Rev 2.1 | 2026-10-22 | Lead Planning & Systems Architecture (audit 004-005) | **Clean-Room Calibration & Schema Repairs:**<br>1. **Schema contract (F-005-1):** Rewrote `groundTruthCalibrator.ts` to the exact Stage 003 §4.7 column list — dropped nonexistent `trip_id`, `vendor_duration_s`, `vendor_distance_m`; added required `vehicle_type`, `tod_bucket`, `vendor_duration_error_pct`, `vendor_distance_error_pct`, `corridor_overlap_pct`, `route_deviation_flag`.<br>2. **Clean-room benchmarking (F-005-2):** Removed raw vendor quotes from the Redis shadow payload; vendor quotes are read once from Tier V `public.ride_vendor_data`; only computed error percentages enter `dpmaps.routing_eval_events`.<br>3. **Correlation (F-005-3):** Shadow quotes keyed `shadow_quote:<trip_hash>` with `trip_hash = HMAC-SHA256(trip_id, IngestionSalt)` (Stage 003 §4.4); raw `trip_id` confined to 30-day-purge operational logs.<br>4. **Role boundary (F-005-4):** Calibrator runs as `ride_dispatch` with explicit grants; `dpmaps_worker` retains `REVOKE ALL` on vendor data.<br>5. **Gate 1 repair (F-005-5):** Median statistics; added vendor-parity clause and corridor overlap ≥ 85%; demoted availability to internal SLO `[ESTIMATE]`; removed invented "95% of trips" wording.<br>6. **Haversine bug (F-005-6):** Fixed duration factor from `/ 5000` to `/ 18000` (18 km/h baseline).<br>7. **Mode 0 & timeouts (F-005-7, F-005-8):** Explicit first-class `off` semantics (zero OSRM/shadow/harvest overhead); unified 300/400/600/0 ms budgets; invalid mode values fail safe to `off` with alert.<br>8. **Definitions (F-005-9 … F-005-12):** Vendor polyline pass-through-only contract; `tod_bucket` boundaries and 4-value enumeration of record; `corridor_overlap_pct` (50 m buffer of OSRM geometry only) and `route_deviation_flag`; Redis ≥ 6.2 `GETDEL` client note.<br>9. **Dispatch-time TOD attribution (refinement pass 2):** `tod_bucket` resolved from `quote.dispatched_at` (the conditions being predicted), not trip completion time.<br>10. **Vendor parity provenance (refinement pass 2):** `vendor_provider` recorded on `public.ride_vendor_data` (X-2 adoption item); the Gate 1 parity statistic is restricted to Barikoi-served rows. |

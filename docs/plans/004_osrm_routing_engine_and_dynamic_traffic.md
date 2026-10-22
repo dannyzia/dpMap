@@ -442,7 +442,7 @@ $$v_{\text{harmonic}} = \frac{N}{\sum_{i=1}^N \frac{1}{v_i}}$$
 Aggregation keys: **(from_osm_node, to_osm_node, tod_bucket, vehicle_type)** and, per concept paper §15.4, **H3 directed edge pairs** at res 10 (res 9 rollup) for analytics and correction learning.
 
 ```sql
--- Proposed DDL — pending Stage 003 adoption (Rev 2.3 patch); see cross-plan note X-2.
+-- DDL adopted via Stage 003 Rev 2.3 patch (Part I of this plan); X-2 resolved.
 -- First-party measurements keyed by ODbL-derived OSM node identifiers (isolated OSM layer).
 CREATE TABLE dpmaps.segment_speeds_tod (
   from_osm_node BIGINT NOT NULL,
@@ -509,7 +509,7 @@ $$\hat{T} = k(v, b) \cdot T_{\text{osrm}}, \qquad k(v, b) = \operatorname{median
 - Persisted factors:
 
 ```sql
--- Proposed DDL — pending Stage 003 adoption (Rev 2.3 patch); see cross-plan note X-2.
+-- DDL adopted via Stage 003 Rev 2.3 patch (Part I of this plan); X-2 resolved.
 CREATE TABLE dpmaps.eta_tod_corrections (
   vehicle_type VARCHAR(16) NOT NULL CHECK (vehicle_type IN ('car', 'bike', 'cng')),
   tod_bucket VARCHAR(16) NOT NULL
@@ -634,7 +634,7 @@ $$\text{overlap\_pct} = 100 \times \frac{\#\{\, p_i : \mathrm{dist}(p_i, \Gamma_
 |---|---|---|
 | **Gate 1 → primary** | Median $e_T$ | ≤ 12% of trip duration |
 | | p95 $e_T$ | ≤ 25% of trip duration |
-| | Vendor parity | median $e_T^{\text{dpMaps}}$ ≤ median $e_T^{\text{Barikoi}}$ on the same trip sample |
+| | Vendor parity | median $e_T^{\text{dpMaps}}$ ≤ median $e_T^{\text{Barikoi}}$ on the same trip sample, restricted to Barikoi-served rows (`vendor_provider = 'barikoi'`) |
 | | Median $e_D$ | ≤ 3.0% |
 | | Corridor overlap | ≥ 85% |
 | | Local OSRM latency | p95 ≤ 8 ms `[ESTIMATE]` |

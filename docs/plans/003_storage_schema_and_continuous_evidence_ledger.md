@@ -1,6 +1,6 @@
 # Stage 003: Storage Schema & Continuous Evidence Ledger Implementation Plan
 
-**Plan Identifier:** RIDE-dpMaps-PLAN-003 (Revision 2.2 — Audited PostGIS Storage Architecture & Strict Clean-Room Evidence Ledger)  
+**Plan Identifier:** RIDE-dpMaps-PLAN-003 (Revision 2.3 — Audited PostGIS Storage Architecture, Clean-Room Evidence Ledger & Stage 004/005 TOD Adoption)  
 **Stage:** 3 of 16 (Database Architecture & Storage Lifecycle)  
 **Parent Document:** [`independent-mapping-engine-concept-paper.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/independent-mapping-engine-concept-paper.md) (§5, §8.1–8.3, §11.1)  
 **TOC Link:** [`000_TOC.md`](file:///D:/My%20Projects/Current%20Project/dpMaps/docs/plans/000_TOC.md)  
@@ -675,11 +675,60 @@ CREATE TABLE public.ride_vendor_data (
   vendor_dest_lng NUMERIC(9, 6) NOT NULL,
   vendor_quoted_dist_m INTEGER NOT NULL,
   vendor_quoted_dur_s INTEGER NOT NULL,
+  vendor_provider VARCHAR(16) NOT NULL
+    CHECK (vendor_provider IN ('barikoi', 'google')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Zero access for mapping workers (enforced via Stage 002 provenance firewall)
 REVOKE ALL ON public.ride_vendor_data FROM dpmaps_worker;
+```
+
+### 4.9 TOD Speed & ETA Correction Tables (Stage 004 Consumers)
+First-party measurements keyed by ODbL-derived OSM node identifiers (isolated OSM layer). Zero vendor data, zero pseudonymous vote data. Written by `workers/trafficHarvester.ts` and the ETA correction job (Stage 004 §6). Nothing merges into `public_pois` (Architectural Invariant 4).
+
+```sql
+CREATE TABLE dpmaps.segment_speeds_tod (
+  from_osm_node BIGINT NOT NULL,
+  to_osm_node BIGINT NOT NULL,
+  tod_bucket VARCHAR(16) NOT NULL
+    CHECK (tod_bucket IN ('morning_peak', 'evening_peak', 'off_peak', 'night')),
+  vehicle_type VARCHAR(16) NOT NULL CHECK (vehicle_type IN ('car', 'bike', 'cng')),
+  harmonic_speed_kmh NUMERIC(5, 2) NOT NULL,
+  sample_count INTEGER NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (from_osm_node, to_osm_node, tod_bucket, vehicle_type)
+);
+
+CREATE TABLE dpmaps.h3_edge_speeds_tod (
+  h3_from VARCHAR(15) NOT NULL,
+  h3_to VARCHAR(15) NOT NULL,
+  tod_bucket VARCHAR(16) NOT NULL
+    CHECK (tod_bucket IN ('morning_peak', 'evening_peak', 'off_peak', 'night')),
+  vehicle_type VARCHAR(16) NOT NULL CHECK (vehicle_type IN ('car', 'bike', 'cng')),
+  harmonic_speed_kmh NUMERIC(5, 2) NOT NULL,
+  sample_count INTEGER NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (h3_from, h3_to, tod_bucket, vehicle_type)
+);
+
+CREATE TABLE dpmaps.eta_tod_corrections (
+  vehicle_type VARCHAR(16) NOT NULL CHECK (vehicle_type IN ('car', 'bike', 'cng')),
+  tod_bucket VARCHAR(16) NOT NULL
+    CHECK (tod_bucket IN ('morning_peak', 'evening_peak', 'off_peak', 'night')),
+  k_factor NUMERIC(6, 4) NOT NULL,
+  sample_count INTEGER NOT NULL,
+  window_start TIMESTAMPTZ NOT NULL,
+  window_end TIMESTAMPTZ NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (vehicle_type, tod_bucket, window_end)
+);
+
+-- First-party derived aggregates: read/write for the pipeline worker, read for analysts.
+GRANT SELECT, INSERT, UPDATE ON dpmaps.segment_speeds_tod, dpmaps.h3_edge_speeds_tod,
+  dpmaps.eta_tod_corrections TO dpmaps_worker;
+GRANT SELECT ON dpmaps.segment_speeds_tod, dpmaps.h3_edge_speeds_tod,
+  dpmaps.eta_tod_corrections TO dpmaps_analyst;
 ```
 
 ---
@@ -958,7 +1007,7 @@ Stage 003 mandates the following automated test verifications prior to Phase 1 d
 - [ ] Database roles created (`dpmaps_worker`, `ride_dispatch`, `dpmaps_admin`, `dpmaps_analyst`) with granular per-table privileges.
 - [ ] Explicit column-level whitelist on `orders` and `REVOKE ALL` on `ride_vendor_data` and `ride_receipts` verified via automated permission tests.
 - [ ] Append-only immutability enforced (`REVOKE UPDATE, DELETE`) on `provenance_events`, `releases`, `poi_versions`, `release_pois`, and `ledger_invalidations`.
-- [ ] DDL deployed: `public_pois` (with 26 canonical categories CHECK constraint, category synonym mappings, nullable names, and random UUIDs), `poi_aliases`, `poi_versions`, `releases`, `release_pois` (with `ON DELETE RESTRICT`), `osm_pois` (with composite PK `(osm_type, osm_id, snapshot_date)`), `trip_evidence_ledger` (with `uq_ledger_trip` idempotency), `ledger_pseudonyms`, `ledger_invalidations`, `active_dedup_key`, `provenance_events`, `suppressions` (immutable partial index without `NOW()`, SLA duration tracking), `query_clusters`, `admin_boundaries` (with `geom` and `geom_full`, no cascade delete), and evaluation tables.
+- [ ] DDL deployed: `public_pois` (with 26 canonical categories CHECK constraint, category synonym mappings, nullable names, and random UUIDs), `poi_aliases`, `poi_versions`, `releases`, `release_pois` (with `ON DELETE RESTRICT`), `osm_pois` (with composite PK `(osm_type, osm_id, snapshot_date)`), `trip_evidence_ledger` (with `uq_ledger_trip` idempotency), `ledger_pseudonyms`, `ledger_invalidations`, `active_dedup_key`, `segment_speeds_tod`, `h3_edge_speeds_tod`, `eta_tod_corrections` (Stage 004 consumers), `provenance_events`, `suppressions` (immutable partial index without `NOW()`, SLA duration tracking), `query_clusters`, `admin_boundaries` (with `geom` and `geom_full`, no cascade delete), and evaluation tables.
 - [ ] 135-day key schedule and multi-key ingestion implemented; single-key aggregation view `dpmaps.v_active_cluster_evidence` and materialized view `dpmaps.mv_cluster_evidence_stats` verified against simulated ground truth.
 - [ ] Launch cold-start partial-window mode ($t < 90\text{ days}$) verified with strict privacy threshold floor.
 - [ ] Query-time exponential decay function `dpmaps.calculate_decayed_weight` deployed; zero-write-amplification verified.
@@ -976,5 +1025,7 @@ Stage 003 mandates the following automated test verifications prior to Phase 1 d
 | Rev 2.0 | 2026-10-22 | Orchestrator (per Audit Brief) | **Audited Architectural Baseline Upgrades:**<br>1. **120-Day Key Schedule (§5):** Replaced flawed 90-day key schedule with 120-day key lifetime and multi-key ingestion (`dpmaps.ledger_pseudonyms`), eliminating 1.6×–2.3× distinct-rider overcounting.<br>2. **Evidence Ledger Hygiene (§4.4):** Removed raw `trip_id` in favor of `trip_hash`; retained `normalized_query` for 90 days to permit deterministic normalizer replay while purging raw keystrokes at 30 days.<br>3. **Zero-Write-Amplification Decay (§6):** Replaced row-mutating nightly decay with read-time dynamic evaluation function `dpmaps.calculate_decayed_weight`.<br>4. **Partitioning & Pruning (§4.4, §6.4):** Migrated from monthly to weekly native partitions (`pg_partman 5.x`); scheduled off-peak pruning worker at 21:00–23:00 UTC.<br>5. **Schema Gaps Resolved (§4.2–§4.8):** Added DDL for `public_pois`, `poi_aliases`, `releases`, `poi_versions`, `provenance_events`, `suppressions`, `admin_boundaries`, evaluation tables, `query_clusters`, `osm_pois`, and `ride_vendor_data`. |
 | Rev 2.1 | 2026-10-22 | Orchestrator (per Scratchpad Audit Verification) | **Strict Clean-Room, Ingestion Privileges & 135-Day Rotation Upgrades:**<br>1. **Clean-Room Evaluation Compliance (§4.7):** Dropped `vendor_duration_s` and `vendor_distance_m` from `dpmaps.routing_eval_events`; added `vendor_duration_error_pct` and `vendor_distance_error_pct`. Added missing Gate 1 & 2 fields to `search_eval_events` (`search_success`, `exit_distance_delta_m`, `vendor_suggestion_selected`, `query_cluster_id`) and routing fields (`vehicle_type`, `tod_bucket`, `corridor_overlap_pct`, `route_deviation_flag`). Added CHECK constraint enforcing `selected_place_id IS NULL` for vendor selections.<br>2. **Granular RBAC & Ingestion Privileges (§3.1):** Removed blanket permissions for `dpmaps_worker`. Granted explicit per-table privileges; enforced append-only immutability (`REVOKE UPDATE, DELETE`) on `provenance_events`, `releases`, `poi_versions`, `release_pois`, and `ledger_invalidations`. Granted `ride_dispatch` sequence `USAGE` and `SELECT` on ledger tables for `RETURNING` clauses and vote-cap checks.<br>3. **Retention & pg_partman 5.x Alignment (§4.4, §6.4):** Fixed `pg_partman 5.x` syntax (`part_config.retention = '90 days'`, `part_config.retention_keep_table = false`). Aligned partition drop and daily boundary delete strictly to `< NOW() - INTERVAL '90 days'` across **both** `trip_evidence_ledger` and `ledger_pseudonyms`.<br>4. **135-Day Window Key Schedule with Operational Slack (§5.2):** Expanded key lifetime from 120 days to 135 days (rotated every 30 days), providing 15 days of jitter slack to eliminate missing-key exceptions. Added formal **Cold-Start Launch Mode** ($t < 90\text{ days}$) using `wk-launch-01`.<br>5. **Provider-Agnostic KMS & Resilience (§5.3):** Defined provider-neutral interface `IKeyManagementProvider` supporting AWS KMS and HashiCorp Vault. Added dead-letter queuing on KMS failure; documented right-to-erasure lifecycle and provider scheduled deletion waiting period.<br>6. **Canonical Aggregation View & Kish Weights (§6.3):** Created `dpmaps.v_active_cluster_evidence` view encapsulating key filtering, fraud invalidation exclusion (`dpmaps.ledger_invalidations`), and calculation of $\sum w$ and $\sum w^2$ for Kish effective sample size $n_{\text{eff}}$. Removed restrictive `HAVING >= 15` from underlying aggregation to preserve runner-up cells for margin gate calculation.<br>7. **POI Schema Refinements (§4.2, §4.3, §4.5, §4.6):** Expanded category CHECK to 37 values matching Concept Paper §13.1 and `AGENTS.md` §7. Added `dpmaps.release_pois` membership table; added `ruleset_hash` and `gate_config_snapshot` to `releases`; added `superseded_by` to `public_pois`; added snapshot date to `osm_pois`; removed cascade delete from `admin_boundaries` and documented crude ADM0 coastline clipping prohibition; updated emergency suppression dual-tier SLA (<1hr automated, <4hr review). |
 | Rev 2.2 | 2026-10-22 | Orchestrator (per Postgres 16 Audit Verification) | **Strict DDL Verification, Aggregation Overcounting Fix & Category Canonicalization:**<br>1. **View 5× Overcounting Elimination (§4.1, §6.3):** Added `dpmaps.active_dedup_key` single-row table containing the active 90-day oldest qualifying key. Joined `dpmaps.v_active_cluster_evidence` on `lp.key_id = adk.key_id`, eliminating 5× weight and vote inflation caused by multi-key pseudonym fan-out.<br>2. **Procedure Call & Retention Syntax (§6.4):** Corrected `SELECT partman.run_maintenance_proc()` to procedure call `CALL partman.run_maintenance_proc()` (mandatory in `pg_partman 5.x`). Added 90-day retention prune for `dpmaps.ledger_invalidations`. Added materialized view `dpmaps.mv_cluster_evidence_stats`.<br>3. **Category Canonicalization (§4.2):** Consolidated POI categories from 37 into 26 disjoint canonical categories (e.g. `fuel`, `airport`, `worship`; removing overlapping synonyms `food`, `station`, `mall`). Added `dpmaps.category_synonym_mappings` lookup table.<br>4. **Index Immutability Fix (§4.5):** Dropped mutable `NOW()` function from `idx_suppressions_active` predicate (`CREATE INDEX idx_suppressions_active ON dpmaps.suppressions (applied_at, expires_at)`). Removed `DEFAULT NOW()` from `reported_at` to enable true SLA duration measurement.<br>5. **Ledger Idempotency & Ingestion Timestamp (§4.4):** Enforced deterministic trip completion time (`created_at TIMESTAMPTZ NOT NULL` without `DEFAULT NOW()`), key-independent `trip_hash` token (`HMAC-SHA256(trip_id, IngestionSalt)`), and unique constraint `CONSTRAINT uq_ledger_trip UNIQUE (trip_hash, created_at)` for `ON CONFLICT DO NOTHING` idempotency.<br>6. **Migration Execution Sequence (§3.1):** Documented 4-phase execution sequence and added operational table prerequisite stubs (`public.orders`, `public.ride_receipts`, `public.ride_vendor_data`) for standalone deployment.<br>7. **Foreign Key Immutability (§4.3) & Composite OSM PK (§4.8):** Enforced `ON DELETE RESTRICT` on `poi_versions` and `release_pois`. Changed `osm_pois` primary key to composite `(osm_type, osm_id, snapshot_date)`. Fixed `admin_boundaries` defaults and `chk_search_eval_vendor_null`. |
+| Rev 2.3 | 2026-10-22 | Lead Planning & Systems Architecture (audit 004-005; X-2 adoption) | **TOD Speed Pipeline & Vendor Provenance Schema (additive only):**<br>1. Added `dpmaps.segment_speeds_tod`, `dpmaps.h3_edge_speeds_tod`, `dpmaps.eta_tod_corrections` (§4.9): first-party TOD speed aggregates and learned ETA correction factors consumed by Stage 004 §6; keyed by ODbL-derived OSM node identifiers / H3 cells; no vendor data.<br>2. Added `vendor_provider` to `public.ride_vendor_data` (§4.8): operational provenance enum (`barikoi`/`google`) enabling the Gate 1 Barikoi-only vendor-parity statistic (concept paper §14.3).<br>3. Grants: `dpmaps_worker` read/write on the three §4.9 tables; `dpmaps_analyst` read. Existing Rev 2.2 constraints, views, and retention rules unchanged. |
+
 
 

@@ -128,13 +128,13 @@ The admin decides when to switch. Month 3 to 4 is a target, not a rule. Gates ar
 | 000 TOC | Done | |
 | 001 Phase 0 seeding and data assets | partiallydone | Rev 2.2 applied per owner. Rev 2.1 verified by running the ingestion script on the real file (49,881 rows). |
 | 002 Provenance firewall and legal | NotDone | Rev 2.1 verified. Rev 2.2 patch (fuzz-test scoping, egress logging, hash coverage, phone regex, `GETDEL`, receipts, quarantine, legal gate) applied per owner, not re-read. |
-| 003 Storage schema and evidence ledger | NotDone | Rev 2.2 applied per scratchpad Postgres 16 verification (view 5× overcounting fixed via active_dedup_key single-key join, CALL partman.run_maintenance_proc syntax, 26 canonical categories CHECK with synonym mapping, ledger_invalidations 90d retention prune, composite PK on osm_pois, immutable partial index on suppressions, trip_hash idempotency UNIQUE constraint). Ready for re-audit. |
+| 003 Storage schema and evidence ledger | NotDone | Rev 2.3 applied per Stage 004/005 audit adoption (additive: segment_speeds_tod, h3_edge_speeds_tod, eta_tod_corrections in §4.9; vendor_provider in ride_vendor_data; Rev 2.2 core verified). |
 | 004 OSRM routing engine and dynamic traffic | NotDone | Rev 2.1 applied per audit (TOD-learned speed pipeline with segment_speeds_tod, multiplicative correction k(v,b), per-edge map-matching, 300ms timeout, relative ETA cutover gates ≤ 12% median / ≤ 25% p95, car/bike/cng profiles). |
 | 005 Dispatch router and shadow benchmarking | NotDone | Rev 2.1 applied per audit (first-class mode 0 off, clean-room Redis shadow payload without vendor quotes, correlation via trip_hash, Stage 003 §4.7 DDL alignment, 18 km/h Haversine fix, Gate 1 median & vendor-parity repair). |
 | 008, 009, 011 | NotDone | First pass only (see below). |
 | 006, 007, 010, 012 to 016 | NotDone | Not yet reviewed. |
 
-**Stage 003 status:** Rev 2.2 applied (view 5× overcounting fixed via `active_dedup_key` single-key join, `CALL partman.run_maintenance_proc` syntax, 26 canonical categories CHECK with synonym mapping, `ledger_invalidations` 90d retention prune, composite PK on `osm_pois`, immutable partial index on `suppressions`, `trip_hash` idempotency UNIQUE constraint, 135-day key schedule, clean-room evaluation tables with only error percentages, and dual-tier takedown SLA <1hr auto / <4hr review). Ready for independent audit.
+**Stage 003 status:** Rev 2.3 applied (Rev 2.2 core verified; Rev 2.3 additively adopts Stage 004/005 consumers: `segment_speeds_tod`, `h3_edge_speeds_tod`, `eta_tod_corrections`, and `vendor_provider` on `ride_vendor_data`). Ready for implementation.
 
 **First-pass findings in other stages:**
 - 008: primary search should call the vendor only on zero local hits, not fewer than 3; two separate indexes (first-party and OSM) merged at query time; mixed autocomplete from launch.
