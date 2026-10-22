@@ -17,7 +17,7 @@ Roles: **orchestrator** (instructs, answers, verifies — skill: `rhizome-orches
 and **builder** (builds, reports, asks — skill: `rhizome-builder`). Load your skill
 at session start.
 
-- Hub: ISSUE-1. All coordination is comments there.
+- Hub: ISSUE-1 (Rhizome project_ref: `01M5H6TECHRC07PB2PJX1PAB9D`). All coordination is comments there.
 - Builder tags: `STEP <n>:` after every build step (even small), `STAGE REPORT:`
   at stage end, `QUESTION:` for clarifications and follow-ups.
 - Orchestrator tags: stage orders, `ANSWER:`, `OWNER-DECISION:`, `VERIFIED:`.
@@ -92,7 +92,7 @@ The admin decides when to switch. Month 3 to 4 is a target, not a rule. Gates ar
 
 **Named houses.** In Bangladesh people name their houses, and such houses can be landmarks. A named house or building may become public when the **name** converges across many unrelated riders. Never publish unit-level addresses, "someone's flat" strings, saved Home/Work places, or any rider's history. A report-wrong-location button and a takedown process exist. No routine per-place admin approval, but a flag-driven exception queue handles abuse reports and takedowns.
 
-**Pseudonyms and keys.** Keyed HMAC pseudonyms. A key can only hash votes made after it was created, so a 90-day window needs keys that live **120 days**, rotated every 30 days, with each vote written under every currently valid key. Distinct riders are counted under the oldest key created at least 90 days before the window end. (A simulation of the Stage 003 original, 90-day validity with the newest key only, overcounted riders by about 1.6 to 2.3 times.) Raw logs purge at 30 days. The ledger must not contain `trip_id`.
+**Pseudonyms and keys.** Keyed HMAC pseudonyms. A key can only hash votes made after it was created, so a 90-day window needs keys that live **135 days** (90 days + 30 days rotation + 15 days jitter buffer), rotated every 30 days, with each vote written under every currently valid key (up to 5 keys). Distinct riders are counted under the oldest key created at least 90 days before the window end (with a cold-start partial-window mode for the first 90 days). (A simulation of the Stage 003 original, 90-day validity with the newest key only, overcounted riders by about 1.6 to 2.3 times; 120 days had zero operational margin for rotation delays). Raw logs purge at 30 days. The ledger must not contain `trip_id`.
 
 **Seeding.** About 2,000 field-surveyed landmarks via the Pin Tool (clean-room), plus OSM POIs in a **separate** `osm_pois` table (ODbL, never merged into `public_pois`).
 
@@ -128,11 +128,11 @@ The admin decides when to switch. Month 3 to 4 is a target, not a rule. Gates ar
 | 000 TOC | Done | |
 | 001 Phase 0 seeding and data assets | partiallydone | Rev 2.2 applied per owner. Rev 2.1 verified by running the ingestion script on the real file (49,881 rows). |
 | 002 Provenance firewall and legal | NotDone | Rev 2.1 verified. Rev 2.2 patch (fuzz-test scoping, egress logging, hash coverage, phone regex, `GETDEL`, receipts, quarantine, legal gate) applied per owner, not re-read. |
-| 003 Storage schema and evidence ledger | NotDone | Reviewed. Rev 2.0 patch brief issued, **not yet applied** (see below). |
+| 003 Storage schema and evidence ledger | NotDone | Rev 2.2 applied per scratchpad Postgres 16 verification (view 5× overcounting fixed via active_dedup_key single-key join, CALL partman.run_maintenance_proc syntax, 26 canonical categories CHECK with synonym mapping, ledger_invalidations 90d retention prune, composite PK on osm_pois, immutable partial index on suppressions, trip_hash idempotency UNIQUE constraint). Ready for re-audit. |
 | 005, 008, 009, 011 | NotDone | First pass only (see below). |
 | 004, 006, 007, 010, 012 to 016 | NotDone | Not yet reviewed. |
 
-**Stage 003 open findings:** 120-day key design with all-valid-key writes; remove `trip_id`; weekly partitions with real retention config; read-time decay; nullable `bangla_name`; weighted-vote columns; lifecycle status; `parent_place_id`; missing tables (`releases`, `poi_versions`, `provenance_events`, `suppressions`, `query_clusters`, `raw_search_events`, evaluation tables, `ride_vendor_data`, `osm_pois`); `admin_level` 0 to 4 with `geom_full`; drop `h3_coverage TEXT[]`; run heavy jobs at 21:00 to 23:00 UTC (03:00 UTC is 09:00 in Dhaka); one takedown target time.
+**Stage 003 status:** Rev 2.2 applied (view 5× overcounting fixed via `active_dedup_key` single-key join, `CALL partman.run_maintenance_proc` syntax, 26 canonical categories CHECK with synonym mapping, `ledger_invalidations` 90d retention prune, composite PK on `osm_pois`, immutable partial index on `suppressions`, `trip_hash` idempotency UNIQUE constraint, 135-day key schedule, clean-room evaluation tables with only error percentages, and dual-tier takedown SLA <1hr auto / <4hr review). Ready for independent audit.
 
 **First-pass findings in other stages:**
 - 005 and 008: no explicit `off` mode (it falls into shadow); `primary` search should call the vendor only on zero local hits, not fewer than 3; no defined path from a tapped vendor suggestion to dispatch coordinates (use a short-TTL session cache with `GETDEL`); the shadow benchmark has no `trip_id` link and ignores the vendor result.
