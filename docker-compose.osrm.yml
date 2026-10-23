@@ -1,0 +1,52 @@
+# docker-compose.osrm.yml — Stage 004 §2 multi-profile OSRM topology.
+# Three isolated osrm-routed engines (car:5001, bike:5002, cng:5003) behind
+# the Stage 005 dispatch gateway. Graphs mount from /opt/dpmaps/data;
+# profiles from ./profiles (repo) or /opt/dpmaps/profiles (host).
+# Health: /healthz per engine (plan §8.1); synthetic route probe in §7.1.
+version: "3.8"
+
+services:
+  dpmaps-osrm-car:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    command: osrm-routed --algorithm mld --shared-memory=no /data/bangladesh.osrm
+    ports:
+      - "5001:5000"
+    volumes:
+      - /opt/dpmaps/data/car:/data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/healthz"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  dpmaps-osrm-bike:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    command: osrm-routed --algorithm mld --shared-memory=no /data/bangladesh.osrm
+    ports:
+      - "5002:5000"
+    volumes:
+      - /opt/dpmaps/data/bike:/data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/healthz"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  dpmaps-osrm-cng:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    command: osrm-routed --algorithm mld --shared-memory=no /data/bangladesh.osrm
+    ports:
+      - "5003:5000"
+    volumes:
+      - /opt/dpmaps/data/cng:/data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/healthz"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped

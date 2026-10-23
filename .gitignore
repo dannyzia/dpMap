@@ -68,6 +68,7 @@ htmlcov/
 *.mbtiles
 *.osrm
 *.osrm.*
+!docker-compose.osrm.yml
 
 # Database Journaling & Temporary Files
 *.sqlite3-journal

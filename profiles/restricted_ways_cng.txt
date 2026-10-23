@@ -1,0 +1,3 @@
+# restricted_ways_cng.txt — curated OSM way-ID blocklist (one numeric ID per line).
+# Populated ONLY from verified regulation after written verification (plan §5).
+# Default: empty (no restrictions). Lines starting with # are ignored.
