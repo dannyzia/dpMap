@@ -80,6 +80,10 @@ tools/poi-tool/data/
 tools/poi-tool/node_modules/
 tools/poi-tool/*.db
 
+# Stage 006 glyph pipeline: reproducible font downloads (SIL OFL) and workspace deps
+tools/glyphs/node_modules/
+tools/glyphs/fonts/
+
 # Logs & Scratch Directories
 *.log
 scratch/

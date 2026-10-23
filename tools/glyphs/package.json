@@ -1,0 +1,13 @@
+{
+  "name": "dpmaps-glyphs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stage 006 Phase-0 Bengali SDF glyph pipeline workspace (fontnik; node_modules gitignored)",
+  "scripts": {
+    "glyphs": "node ../scripts/generate_bengali_glyphs.js",
+    "test": "node ../../tests/stage-006/bengali_shaping_audit.test.js"
+  },
+  "dependencies": {
+    "fontnik": "0.7.7"
+  }
+}
