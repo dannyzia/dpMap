@@ -11,5 +11,10 @@
  */
 declare module 'node:crypto' {
   export function randomUUID(): string;
+  export interface Hash {
+    update(s: string): Hash;
+    digest(enc: string): string;
+  }
+  export function createHash(algo: string): Hash;
 }
 declare function setImmediate(callback: () => void): unknown;
