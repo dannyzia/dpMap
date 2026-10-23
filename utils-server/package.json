@@ -1,0 +1,10 @@
+{
+  "name": "dpmaps-utils-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stage 002 isolated vendor client wrapper (clean-room firewall)",
+  "scripts": {
+    "test": "node canaryIsolation.test.js"
+  }
+}
